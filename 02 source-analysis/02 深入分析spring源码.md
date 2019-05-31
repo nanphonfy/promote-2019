@@ -1,4 +1,4 @@
-spring IOC体系结构
+### 1.spring IOC核心体系结构
 
 #### 1.1 BeanFactory
 >Spring Bean的创建是典型的工厂模式，这些Bean工厂（IOC容器）在管理对象间的依赖关系提供了便利和基础服务，Spring中有许多IOC容器的实现，相互关系如下：
@@ -68,8 +68,14 @@ XmlBeanFactory实现最基本的IOC容器（可读取XML文件定义的BeanDefin
 
 ![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/XmlBeanDefinitionReader.jpg?raw=true)
 
-
 ---
+
+### 2.IOC容器初始化
+>IOC容器的初始化过程包括BeanDefinition的Resource定位、载入和注册。以ApplicationContext为例讲解（web项目中使用的XmlWebApplicationContext、ClasspathXmlApplicationContext等就属于这个继承体系），如下：
+
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/ApplicationContext.jpg?raw=true)
+
+>ApplicationContext允许上下文嵌套，通过保持父上下文可维持一个上下文体系。Bean可在上下文体系中查找：①检查当前上下文；②父上下文，逐级向上（为不同的Spring应用提供共享的Bean环境）。
 
 看源码，找入口非常关键。
 IOC/DI/AOP/BOP，要和设计模式联系上。
