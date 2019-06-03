@@ -77,6 +77,26 @@ XmlBeanFactory实现最基本的IOC容器（可读取XML文件定义的BeanDefin
 
 >ApplicationContext允许上下文嵌套，通过保持父上下文可维持一个上下文体系。Bean可在上下文体系中查找：①检查当前上下文；②父上下文，逐级向上（为不同的Spring应用提供共享的Bean环境）。
 
+#### 2.1 XmlBeanFactory(屌丝IOC)流程  
+
+```java 
+public class XmlBeanFactory extends DefaultListableBeanFactory {
+	private final XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(this);
+
+	public XmlBeanFactory(Resource resource) throws BeansException {
+		this(resource, null);
+	}
+
+	public XmlBeanFactory(Resource resource, BeanFactory parentBeanFactory) throws BeansException {
+		super(parentBeanFactory);
+		this.reader.loadBeanDefinitions(resource);
+	}
+}
+```
+
+
+#### 2.2 FileSystemXmlApplicationContext的IOC容器流程   
+
 看源码，找入口非常关键。
 IOC/DI/AOP/BOP，要和设计模式联系上。
 
@@ -136,6 +156,9 @@ org.springframework.beans.factory.xml.XmlBeanDefinitionReader
 
 Spring源码浅析之BeanDefinition
 https://blog.csdn.net/ljw761123096/article/details/80353202
+
+汽车倒车入库技巧图解  
+https://jingyan.baidu.com/article/3f16e003bc653c2590c1035d.html
 
 
 
