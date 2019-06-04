@@ -81,6 +81,7 @@ XmlBeanFactory实现最基本的IOC容器（可读取XML文件定义的BeanDefin
 
 ```java 
 public class XmlBeanFactory extends DefaultListableBeanFactory {
+    //this传的是factory对象
 	private final XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(this);
 
 	public XmlBeanFactory(Resource resource) throws BeansException {
@@ -94,8 +95,110 @@ public class XmlBeanFactory extends DefaultListableBeanFactory {
 }
 ```
 
-
+- 用代码，直观表达源码意图：定位、载入、注册的全过程
+```java 
+//根据xml文件，创建resource资源对象（包含BeanDefinition信息）
+ClassPathResource resource = new ClassPathResource("applicantion-context.xml");
+//创造DefaultListableBeanFactory
+DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+// 创建读取器，用于载入BeanDefinition
+// 需要BeanDefinition做为参数——会将读取的信息回调配置给factory
+// XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(this)中的this传的是factory
+XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(factory);
+// 执行载入的BeanDefinition方法，最后完成bean的载入和注册
+// 完成后bean成功放置到IOC容器中
+reader.loadBeanDefinitions(resource);
+```
 #### 2.2 FileSystemXmlApplicationContext的IOC容器流程   
+
+##### 2.2.1 高富帅版IOC解剖
+```java 
+public FileSystemXmlApplicationContext(String... configLocations) throws BeansException {
+	this(configLocations, true, null);
+}
+//实际调用构造函数
+public FileSystemXmlApplicationContext(String[] configLocations, boolean refresh, ApplicationContext parent)
+		throws BeansException {
+
+	super(parent);
+	setConfigLocations(configLocations);
+	if (refresh) {
+		refresh();
+	}
+}
+```
+##### 2.2.2 设置资源加载器和资源定位
+>创建FileSystemXmlApplicationContext容器时，构造方法做两项重要工作：  
+>>①调用父类容器的构造方法(super(parent)方法)为容器设置好Bean资源加载器； 
+②调用父类AbstractRefreshableConfigApplicationContext的setConfigLocations(configLocations)方法设置Bean定义资源文件的定位路径。  
+
+>通过追踪FileSystemXmlApplicationContext的继承体系，发现其父类的父类AbstractApplicationContext中初始化IOC容器所做的主要源码如下：
+
+```java 
+public abstract class AbstractApplicationContext extends DefaultResourceLoader
+		implements ConfigurableApplicationContext, DisposableBean {
+		//静态初始化块，在整个容器创建过程中只执行一次
+	static {
+		// Eagerly load the ContextClosedEvent class to avoid weird classloader issues
+		// on application shutdown in WebLogic 8.1. (Reported by Dustin Woods.)
+		//为了避免应用程序在Weblogic8.1关闭时出现类加载异常加载问题，加载IOC容器关闭事件(ContextClosedEvent)类
+		ContextClosedEvent.class.getName();
+	}
+	public AbstractApplicationContext() {
+		this.resourcePatternResolver = getResourcePatternResolver();
+	}
+
+	//FileSystemXmlApplicationContext调用父类构造方法调用的就是该方法
+	public AbstractApplicationContext(ApplicationContext parent) {
+		this();
+		setParent(parent);
+	}
+	//获取一个Spring Source的加载器用于读入Spring Bean定义资源文件
+	protected ResourcePatternResolver getResourcePatternResolver() {
+		//AbstractApplicationContext继承DefaultResourceLoader，因此也是一个资源加载器
+        //Spring资源加载器，其getResource(String location)方法用于载入资源
+		return new PathMatchingResourcePatternResolver(this);
+	}
+}
+```
+AbstractApplicationContext构造方法中调用PathMatchingResourcePatternResolver的构造方法创建Spring资源加载器
+
+```java 
+public PathMatchingResourcePatternResolver(ResourceLoader resourceLoader) {
+	Assert.notNull(resourceLoader, "ResourceLoader must not be null");
+	//设置Spring的资源加载器
+	this.resourceLoader = resourceLoader;
+}
+```
+>设置容器的资源加载器后，执行setConfigLocations方法
+——调用其父类AbstractRefreshableConfigApplicationContext的方法对Bean定义资源文件的定位，源码如下：
+
+```java 
+//解析Bean定义资源文件的路径，处理多个资源文件字符串数组
+public void setConfigLocations(String[] locations) {
+	if (locations != null) {
+		Assert.noNullElements(locations, "Config locations must not be null");
+		this.configLocations = new String[locations.length];
+		for (int i = 0; i < locations.length; i++) {
+			//resolvePath为同一个类中将字符串解析为路径的方法  
+			this.configLocations[i] = resolvePath(locations[i]).trim();
+		}
+	}
+	else {
+		this.configLocations = null;
+	}
+}
+```
+>既可使用一个字符串来配置多个SpringBean定义资源文件，也可使用字符串数组：
+>- ClasspathResource res=new ClasspathResource(“a.xml,b.xml,......”);多个资源文件路径之间可以是用”,;\t\n”等分隔。  
+>- ClasspathResource res=new ClasspathResource(newString[]{“a.xml”,”b.xml”,......});  
+
+>至此，SpringIOC容器在初始化时将配置的Bean定义资源文件定位为Spring封装的Resource。
+
+##### 2.2.3 AbstractApplicationContext的refresh函数载入Bean定义过程
+
+
+
 
 看源码，找入口非常关键。
 IOC/DI/AOP/BOP，要和设计模式联系上。
