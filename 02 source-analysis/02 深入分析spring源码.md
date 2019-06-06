@@ -377,6 +377,11 @@ protected Resource[] getConfigResources() {
 }
 ```
 
+##### 2.2.6 AbstractBeanDefinitionReader的loadBeanDefinitions方法
+>AbstractBeanDefinitionReader读取Bean定义资源,在其抽象父类AbstractBeanDefinitionReader中定义了载入过程。
+>loadBeanDefinitions方法做了两件事：①调用资源加载器的获取资源方法resourceLoader.getResource(location)，获取加载资源；②真正执行加载功能是其子类XmlBeanDefinitionReader的loadBeanDefinitions方法。
+
+>ResourceLoader与ApplicationContext继承系图，可知道其实际调用的是DefaultResourceLoader中的getSource()方法定位Resource，因为FileSystemXmlApplicationContext本身就是DefaultResourceLoader的实现类，故又回到了FileSystemXmlApplicationContext中来。
 
 看源码，找入口非常关键。
 IOC/DI/AOP/BOP，要和设计模式联系上。
