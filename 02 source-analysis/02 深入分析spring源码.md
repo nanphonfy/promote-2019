@@ -274,7 +274,7 @@ SpringIOC容器载入Bean定义资源文件从其子类容器的refreshBeanFacto
 
 ##### 2.2.4 AbstractApplicationContext的obtainFreshBeanFactory()
 - AbstractApplicationContext的obtainFreshBeanFactory()方法调用子类容器的refreshBeanFactory()方法，启动容器载入Bean定义资源文件的过程
-```java 
+```java
 //org.springframework.context.support.AbstractApplicationContext
 //protected abstract void refreshBeanFactory() throws BeansException, IllegalStateException;
 protected ConfigurableListableBeanFactory obtainFreshBeanFactory() {
@@ -383,16 +383,16 @@ protected Resource[] getConfigResources() {
 >AbstractBeanDefinitionReader读取Bean定义资源,在其抽象父类AbstractBeanDefinitionReader中定义了载入过程。
 >loadBeanDefinitions方法做了两件事：①调用资源加载器的获取资源方法resourceLoader.getResource(location)，获取加载资源；②真正执行加载功能是其子类XmlBeanDefinitionReader的loadBeanDefinitions方法。
 
-
-```java 
+>ResourceLoader与ApplicationContext继承系图，可知道其实际调用的是DefaultResourceLoader中的getSource()方法定位Resource，因为FileSystemXmlApplicationContext本身就是DefaultResourceLoader的实现类，故又回到了FileSystemXmlApplicationContext中来。
+```java
 //org.springframework.beans.factory.support.AbstractBeanDefinitionReader
-//重载方法，调用下面的loadBeanDefinitions(String, Set<Resource>);方法 
+//重载方法，调用下面的loadBeanDefinitions(String, Set<Resource>);方法
 public int loadBeanDefinitions(String location) throws BeanDefinitionStoreException {
 	return loadBeanDefinitions(location, null);
 }
 
 public int loadBeanDefinitions(String location, Set<Resource> actualResources) throws BeanDefinitionStoreException {
-	//获取在IoC容器初始化过程中设置的资源加载器 
+	//获取在IoC容器初始化过程中设置的资源加载器
 	ResourceLoader resourceLoader = getResourceLoader();
 	if (resourceLoader == null) {
 		throw new BeanDefinitionStoreException("Cannot import bean definitions from location [" + location + "]: no ResourceLoader available");
@@ -401,10 +401,10 @@ public int loadBeanDefinitions(String location, Set<Resource> actualResources) t
 	if (resourceLoader instanceof ResourcePatternResolver) {
 		// Resource pattern matching available.
 		try {
-			//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源  
-            //加载多个指定位置的Bean定义资源文件  
+			//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源
+            //加载多个指定位置的Bean定义资源文件
 			Resource[] resources = ((ResourcePatternResolver) resourceLoader).getResources(location);
-			//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能 
+			//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能
 			int loadCount = loadBeanDefinitions(resources);
 			if (actualResources != null) {
 				for (Resource resource : resources) {
@@ -422,7 +422,7 @@ public int loadBeanDefinitions(String location, Set<Resource> actualResources) t
 	}
 	else {
 		// Can only load single resources by absolute URL.
-		//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源  
+		//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源
         //加载单个指定位置的Bean定义资源文件
 		Resource resource = resourceLoader.getResource(location);
 		//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能
@@ -453,7 +453,7 @@ public int loadBeanDefinitions(String... locations) throws BeanDefinitionStoreEx
 ##### 2.2.7 DefaultResourceLoader的getResource方法
 >资源加载器获取要读入的资源：XmlBeanDefinitionReader调用父类DefaultResourceLoader方法。
 
-```java 
+```java
 //org.springframework.core.io.DefaultResourceLoader
 //获取Resource的具体实现方法
 public Resource getResource(String location) {
@@ -471,7 +471,7 @@ public Resource getResource(String location) {
 		}
 		catch (MalformedURLException ex) {
 			// No URL -> resolve as resource path.
-			//如果既不是classpath标识，又不是URL标识的Resource定位，则调用容器本身的getResourceByPath方法获取Resource 
+			//如果既不是classpath标识，又不是URL标识的Resource定位，则调用容器本身的getResourceByPath方法获取Resource
 			return getResourceByPath(location);
 		}
 	}
@@ -493,7 +493,7 @@ protected Resource getResourceByPath(String path) {
 >XmlBeanDefinitionReader加载Bean定义资源,源码代表bean文件的资源定义以后的载入过程。
 
 
-```java 
+```java
 //org.springframework.beans.factory.xml.XmlBeanDefinitionReader
 //XmlBeanDefinitionReader加载资源的入口方法
 public int loadBeanDefinitions(Resource resource) throws BeanDefinitionStoreException {
@@ -542,7 +542,7 @@ protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
 
 #### 2.2.9 DocumentLoader的loadDocument方法
 >DocumentLoader将Bean定义资源转换成Document对象源码：
-```java 
+```java
 //org.springframework.beans.factory.xml.DocumentLoader定义了接口
 //org.springframework.beans.factory.xml.DefaultDocumentLoader实现了接口，如下
 //使用标准的JAXP将载入的Bean定义资源转换成document对象
@@ -557,7 +557,7 @@ public Document loadDocument(InputSource inputSource, EntityResolver entityResol
 	DocumentBuilder builder = createDocumentBuilder(factory, entityResolver, errorHandler);
 	//解析Spring的Bean定义资源
 	return builder.parse(inputSource);
-}	
+}
 
 //创建文档解析工厂
 protected DocumentBuilderFactory createDocumentBuilderFactory(int validationMode, boolean namespaceAware)
@@ -591,7 +591,7 @@ protected DocumentBuilderFactory createDocumentBuilderFactory(int validationMode
 
 #### 2.2.10 XmlBeanDefinitionReader的registerBeanDefinitions方法
 >XmlBeanDefinitionReader类中的doLoadBeanDefinitions方法是从特定XML文件中实际载入Bean定义资源的方法，该方法在载入Bean定义资源后将其转换为Document对象，接下来调用registerBeanDefinitions启动SpringIOC容器对Bean定义的解析过程。
-```java 
+```java
 //按照Spring的Bean语义要求将Bean定义资源解析并转换为容器内部数据结构
 public int registerBeanDefinitions(Document doc, Resource resource) throws BeanDefinitionStoreException {
 	//得到BeanDefinitionDocumentReader来对xml格式的BeanDefinition解析
@@ -605,8 +605,8 @@ public int registerBeanDefinitions(Document doc, Resource resource) throws BeanD
 	return getRegistry().getBeanDefinitionCount() - countBefore;
 }
 ```
->Bean定义资源的载入解析的两个过程：  
-①通过调用XML解析器将Bean定义资源文件转换得到Document对象（没按照Spring的Bean规则解析，载入过程）②完成通用XML解析后，按照Spring的Bean规则对Document对象进行解析。  
+>Bean定义资源的载入解析的两个过程：
+①通过调用XML解析器将Bean定义资源文件转换得到Document对象（没按照Spring的Bean规则解析，载入过程）②完成通用XML解析后，按照Spring的Bean规则对Document对象进行解析。
 按照Spring的Bean规则对Document对象解析的过程是在接口BeanDefinitionDocumentReader的实现类DefaultBeanDefinitionDocumentReader中实现的。
 
 ---
