@@ -704,3 +704,50 @@ public static void registerBeanDefinition(
 }
 ```
 >当调用BeanDefinitionReaderUtils向IOC容器注册解析的BeanDefinition时，真正完成注册功能的是DefaultListableBeanFactory。
+
+##### 2.2.17 DefaultListableBeanFactory向IOC容器注册解析后的BeanDefinition  
+>DefaultListableBeanFactory中使用一个HashMap的集合对象存放IOC容器中注册解析的BeanDefinition：
+
+```
+//向IoC容器注册解析的BeanDefinito
+public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) throws BeanDefinitionStoreException {
+	Assert.hasText(beanName, "Bean name must not be empty");
+	Assert.notNull(beanDefinition, "BeanDefinition must not be null");
+
+	//校验解析的BeanDefiniton
+	if (beanDefinition instanceof AbstractBeanDefinition) {
+		try {
+			((AbstractBeanDefinition) beanDefinition).validate();
+		}catch (BeanDefinitionValidationException ex) {
+			throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(), beanName,"Validation of bean definition failed", ex);
+		}
+	}
+
+	//注册的过程中需要线程同步，以保证数据的一致性
+	synchronized (this.beanDefinitionMap) {
+		Object oldBeanDefinition = this.beanDefinitionMap.get(beanName);
+		
+		//检查是否有同名的BeanDefinition已经在IOC容器中注册，如果已经注册，  
+        //并且不允许覆盖已注册的Bean，则抛出注册失败异常
+		if (oldBeanDefinition != null) {
+			if (!this.allowBeanDefinitionOverriding) {
+				throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(), beanName,"Cannot register bean definition [" + beanDefinition + "] for bean '" + beanName + "': There is already [" + oldBeanDefinition + "] bound.");
+			}
+			else {//如果允许覆盖，则同名的Bean，后注册的覆盖先注册的
+				if (this.logger.isInfoEnabled()) {
+					this.logger.info("Overriding bean definition for bean '" + beanName + "': replacing [" + oldBeanDefinition + "] with [" + beanDefinition + "]");
+				}
+			}
+		}
+		else {//IOC容器中没有已经注册同名的Bean，按正常注册流程注册
+			this.beanDefinitionNames.add(beanName);
+			this.frozenBeanDefinitionNames = null;
+		}
+		this.beanDefinitionMap.put(beanName, beanDefinition);
+	}
+	//重置所有已经注册过的BeanDefinition的缓存
+	resetBeanDefinition(beanName);
+}
+```
+>Bean定义资源文件中配置的Bean被解析过后，已注册到IOC容器中，被容器管理，真正完成IOC容器初始化所做的全部工作。现IOC容器已建立整个Bean的配置信息，这些BeanDefinition信息已可使用，且可被检索，IOC容器的作用是对这些注册的Bean定义信息进行处理和维护。这些的注册的Bean定义信息是IOC容器控制反转的基础，正是有了这些注册的数据，容器才可进行依赖注入。
+
