@@ -439,3 +439,81 @@ protected BeanWrapper createBeanInstance(String beanName, RootBeanDefinition mbd
 }
 ```
 >对使用工厂方法和自动装配特性的Bean的实例化相当比较清楚，调用相应的工厂方法或者参数匹配的构造方法即可完成实例化对象的工作，但是对于我们最常使用的默认无参构造方法就需要使用相应的初始化策略(JDK的反射机制或者CGLIB)来进行初始化了，在方法getInstantiationStrategy().instantiate()中就具体实现类使用初始策略实例化对象。
+
+#### 1.5 SimpleInstantiationStrategy类的无参构造方法创建Bean对象
+>使用默认无参构造方法创建Bean时，getInstantiationStrategy().instantiate()调用了SimpleInstantiationStrategy类中的实例化Bean的方法：
+
+```java 
+//使用初始化策略实例化Bean对象
+public Object instantiate(RootBeanDefinition beanDefinition, String beanName, BeanFactory owner) {
+	// Don't override the class with CGLIB if no overrides.
+	// 若Bean定义中无方法覆盖，则不需CGLIB父类类的方法
+	if (beanDefinition.getMethodOverrides().isEmpty()) {
+		Constructor<?> constructorToUse;
+		synchronized (beanDefinition.constructorArgumentLock) {
+			// 获取对象的构造方法或工厂方法
+			constructorToUse = (Constructor<?>) beanDefinition.resolvedConstructorOrFactoryMethod;
+			
+			// 若无构造方法且无工厂方法 
+			if (constructorToUse == null) {
+				// 使用JDK反射，判断要实例化Bean是否是接口
+				final Class clazz = beanDefinition.getBeanClass();
+				if (clazz.isInterface()) {
+					throw new BeanInstantiationException(clazz, "Specified class is an interface");
+				}
+				try {
+					if (System.getSecurityManager() != null) {
+						// 这里是一个匿名内置类，使用反射获取Bean的构造方法
+						constructorToUse = AccessController.doPrivileged(new PrivilegedExceptionAction<Constructor>() {
+							public Constructor run() throws Exception {
+								return clazz.getDeclaredConstructor((Class[]) null);
+							}
+						});
+					}
+					else {
+						constructorToUse =	clazz.getDeclaredConstructor((Class[]) null);
+					}
+					beanDefinition.resolvedConstructorOrFactoryMethod = constructorToUse;
+				}
+				catch (Exception ex) {
+					throw new BeanInstantiationException(clazz, "No default constructor found", ex);
+				}
+			}
+		}
+		// 使用BeanUtils实例化，通过反射机制调用”构造方法.newInstance(arg)”来进行实例化
+		return BeanUtils.instantiateClass(constructorToUse);
+	}
+	else {
+		// Must generate CGLIB subclass.
+		// 使用CGLIB来实例化对象
+		return instantiateWithMethodInjection(beanDefinition, beanName, owner);
+	}
+}
+```
+>从上面看到：若Bean有方法被覆盖，则使用JDK反射机制实例化，否则使用CGLIB实例化。  
+instantiateWithMethodInjection方法调用SimpleInstantiationStrategy的子类CglibSubclassingInstantiationStrategy使用CGLIB来进行初始化：
+
+```java 
+// org.springframework.beans.factory.support.CglibSubclassingInstantiationStrategy
+// 使用CGLIB进行Bean对象实例化
+public Object instantiate(Constructor ctor, Object[] args) {
+	// CGLIB中的类
+	Enhancer enhancer = new Enhancer();
+	// 将Bean本身作为其基类
+	enhancer.setSuperclass(this.beanDefinition.getBeanClass());
+	enhancer.setCallbackFilter(new CallbackFilterImpl());
+	enhancer.setCallbacks(new Callback[] {
+			NoOp.INSTANCE,
+			new LookupOverrideMethodInterceptor(),
+			new ReplaceOverrideMethodInterceptor()
+	});
+
+	// 使用CGLIB的create方法生成实例对象
+	return (ctor == null) ?
+			enhancer.create() :
+			enhancer.create(ctor.getParameterTypes(), args);
+}
+```
+>CGLIB是常用的字节码生成器的类库，提供一系列API实现java字节码的生成和转换功能。JDK的动态代理只能针对接口，若一个类没实现任何接口，要对其进行动态代理只能使用CGLIB。
+
+#### 1.6 populateBean方法对Bean属性的依赖注入  
