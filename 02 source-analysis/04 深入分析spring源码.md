@@ -517,3 +517,357 @@ public Object instantiate(Constructor ctor, Object[] args) {
 >CGLIB是常用的字节码生成器的类库，提供一系列API实现java字节码的生成和转换功能。JDK的动态代理只能针对接口，若一个类没实现任何接口，要对其进行动态代理只能使用CGLIB。
 
 #### 1.6 populateBean方法对Bean属性的依赖注入  
+>Bean依赖注入两个过程：  
+①createBeanInstance：生成Bean包含的Java实例；
+②populateBean：对Bean属性的依赖注入进行处理。   
+继续分析生成对象后，IOC容器如何将Bean的属性依赖关系注入Bean实例并设置好：
+
+```java 
+//org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
+//将Bean属性设置到生成的实例对象上
+protected void populateBean(String beanName, RootBeanDefinition mbd, BeanWrapper bw) {
+	// 获取容器在解析Bean时为BeanDefiniton设置的属性值
+	PropertyValues pvs = mbd.getPropertyValues();
+
+	// 实例对象为null
+	if (bw == null) {
+		if (!pvs.isEmpty()) {
+			throw new BeanCreationException(mbd.getResourceDescription(), beanName, "Cannot apply property values to null instance");
+		}
+		else {
+			// 实例对象为null，属性值也为空，不需设置属性值，直接返回 
+			return;
+		}
+	}
+
+	//在设置属性前调用Bean的PostProcessor后置处理器
+	boolean continueWithPropertyPopulation = true;
+
+	if (!mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()) {
+		for (BeanPostProcessor bp : getBeanPostProcessors()) {
+			if (bp instanceof InstantiationAwareBeanPostProcessor) {
+				InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+				if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+					continueWithPropertyPopulation = false;
+					break;
+				}
+			}
+		}
+	}
+
+	if (!continueWithPropertyPopulation) {
+		return;
+	}
+
+	// 依赖注入开始，首先处理autowire自动装配的注入
+	if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+			mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+		MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+
+		// 对autowire自动装配的处理，根据Bean名称自动装配注入
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+			autowireByName(beanName, mbd, bw, newPvs);
+		}
+
+		// 根据Bean类型自动装配注入
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+			autowireByType(beanName, mbd, bw, newPvs);
+		}
+
+		pvs = newPvs;
+	}
+
+	// 检查容器是否持有用于处理单例模式Bean关闭时的后置处理器
+	boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+	// Bean实例对象没依赖，即没继承基类
+	boolean needsDepCheck = (mbd.getDependencyCheck() != RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+	if (hasInstAwareBpps || needsDepCheck) {
+		// 从实例对象中提取属性描述符
+		PropertyDescriptor[] filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+		if (hasInstAwareBpps) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					//使用BeanPostProcessor处理器处理属性值
+					pvs = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+					if (pvs == null) {
+						return;
+					}
+				}
+			}
+		}
+		if (needsDepCheck) {
+			// 为要设置的属性进行依赖检查
+			checkDependencies(beanName, mbd, filteredPds, pvs);
+		}
+	}
+	// 对属性进行注入
+	applyPropertyValues(beanName, mbd, bw, pvs);
+}
+
+// 解析并注入依赖属性的过程 
+protected void applyPropertyValues(String beanName, BeanDefinition mbd, BeanWrapper bw, PropertyValues pvs) {
+	if (pvs == null || pvs.isEmpty()) {
+		return;
+	}
+
+	// 封装属性值
+	MutablePropertyValues mpvs = null;
+	List<PropertyValue> original;
+
+	if (System.getSecurityManager()!= null) {
+		if (bw instanceof BeanWrapperImpl) {
+			// 设置安全上下文，JDK安全机制
+			((BeanWrapperImpl) bw).setSecurityContext(getAccessControlContext());
+		}
+	}
+
+	if (pvs instanceof MutablePropertyValues) {
+		mpvs = (MutablePropertyValues) pvs;
+		// 属性值已经转换
+		if (mpvs.isConverted()) {
+			// Shortcut: use the pre-converted values as-is.
+			try {
+				// 为实例化对象设置属性值
+				bw.setPropertyValues(mpvs);
+				return;
+			}
+			catch (BeansException ex) {
+				throw new BeanCreationException(mbd.getResourceDescription(),beanName, "Error setting property values", ex);
+			}
+		}
+		// 获取属性值对象的原始类型值
+		original = mpvs.getPropertyValueList();
+	}
+	else {
+		original = Arrays.asList(pvs.getPropertyValues());
+	}
+
+	// 获取用户自定义的类型转换
+	TypeConverter converter = getCustomTypeConverter();
+	if (converter == null) {
+		converter = bw;
+	}
+	// 创建一个Bean定义属性值解析器，将Bean定义中的属性值解析为Bean实例的实际值
+	BeanDefinitionValueResolver valueResolver = new BeanDefinitionValueResolver(this, beanName, mbd, converter);
+
+	// 为属性的解析值创建一个拷贝，将拷贝的数据注入到实例对象中
+	List<PropertyValue> deepCopy = new ArrayList<PropertyValue>(original.size());
+	boolean resolveNecessary = false;
+	for (PropertyValue pv : original) {
+		// 属性值不需转换
+		if (pv.isConverted()) {
+			deepCopy.add(pv);
+		}
+		// 属性值需转换
+		else {
+			String propertyName = pv.getName();
+			// 原始属性值，即转换前的属性值
+			Object originalValue = pv.getValue();
+			// 转换属性值，如将引用转换为IoC容器中实例化对象引用
+			Object resolvedValue = valueResolver.resolveValueIfNecessary(pv, originalValue);
+			// 转换后的属性值
+			Object convertedValue = resolvedValue;
+			// 属性值是否可转换
+			boolean convertible = bw.isWritableProperty(propertyName) &&
+					!PropertyAccessorUtils.isNestedOrIndexedProperty(propertyName);
+			if (convertible) {
+				// 使用用户自定义的类型转换器转换属性值
+				convertedValue = convertForProperty(resolvedValue, propertyName, bw, converter);
+			}
+			// 存储转换后的属性值，避免每次属性注入时的转换工作
+			if (resolvedValue == originalValue) {
+				if (convertible) {
+					// 设置属性转换后的值
+					pv.setConvertedValue(convertedValue);
+				}
+				deepCopy.add(pv);
+			}
+			// 属性是可转换的，且属性原始值是字符串类型，且属性的原始类型值不是动态生成的字符串，且属性的原始值不是集合或数组类型
+			else if (convertible && originalValue instanceof TypedStringValue &&
+					!((TypedStringValue) originalValue).isDynamic() &&
+					!(convertedValue instanceof Collection || ObjectUtils.isArray(convertedValue))) {
+				pv.setConvertedValue(convertedValue);
+				deepCopy.add(pv);
+			}
+			else {
+				resolveNecessary = true;
+				// 重新封装属性的值
+				deepCopy.add(new PropertyValue(pv, convertedValue));
+			}
+		}
+	}
+	if (mpvs != null && !resolveNecessary) {
+		// 标记属性值已经转换过
+		mpvs.setConverted();
+	}
+
+	// Set our (possibly massaged) deep copy.
+	// 进行属性依赖注入
+	try {
+		bw.setPropertyValues(new MutablePropertyValues(deepCopy));
+	}
+	catch (BeansException ex) {
+		throw new BeanCreationException(mbd.getResourceDescription(), beanName,"Error setting property values", ex);
+	}
+}
+```
+>对属性的注入过程分两种：  
+①属性值类型不需转换时，不需解析属性值，直接准备依赖注入；  
+②属性值需类型转换时，如对其他对象的引用等，需解析属性值，然后对解析后的属性值进行依赖注入。  
+对属性值的解析是在BeanDefinitionValueResolver类中的resolveValueIfNecessary方法中进行的，对属性值的依赖注入是通过bw.setPropertyValues方法实现的，在分析属性值的依赖注入之前，先分析下对属性值的解析过程。
+
+#### 1.7 BeanDefinitionValueResolver解析属性值  
+>当容器对属性依赖注入时，如发现属性值需类型转换，eg.属性值是容器中另一个Bean实例的引用，则容器需根据属性值解析出所引用的对象，然后将该引用对象注入到目标实例的属性上，对属性进行解析由resolveValueIfNecessary方法实现
+
+```java 
+//org.springframework.beans.factory.support.BeanDefinitionValueResolver
+// 解析属性值，对注入类型转换
+public Object resolveValueIfNecessary(Object argName, Object value) {
+	// 对引用类型的属性进行解析
+	if (value instanceof RuntimeBeanReference) {
+		RuntimeBeanReference ref = (RuntimeBeanReference) value;
+		// 调用引用类型属性的解析方法
+		return resolveReference(argName, ref);
+	}
+	// 对属性值是引用容器中另一个Bean名称的解析
+	else if (value instanceof RuntimeBeanNameReference) {
+		String refName = ((RuntimeBeanNameReference) value).getBeanName();
+		refName = String.valueOf(evaluate(refName));
+		// 从容器中获取指定名称的Bean
+		if (!this.beanFactory.containsBean(refName)) {
+			throw new BeanDefinitionStoreException(
+					"Invalid bean name '" + refName + "' in bean reference for " + argName);
+		}
+		return refName;
+	}
+	// 对Bean类型属性的解析，主要是Bean中的内部类
+	else if (value instanceof BeanDefinitionHolder) {
+		BeanDefinitionHolder bdHolder = (BeanDefinitionHolder) value;
+		return resolveInnerBean(argName, bdHolder.getBeanName(), bdHolder.getBeanDefinition());
+	}
+	else if (value instanceof BeanDefinition) {
+		BeanDefinition bd = (BeanDefinition) value;
+		return resolveInnerBean(argName, "(inner bean)", bd);
+	}
+	// 对集合数组类型的属性解析
+	else if (value instanceof ManagedArray) {
+		ManagedArray array = (ManagedArray) value;
+		// 获取数组的类型
+		Class<?> elementType = array.resolvedElementType;
+		if (elementType == null) {
+			 // 获取数组元素的类型
+			String elementTypeName = array.getElementTypeName();
+			if (StringUtils.hasText(elementTypeName)) {
+				try {
+					// 使用反射机制创建指定类型的对象
+					elementType = ClassUtils.forName(elementTypeName,this.beanFactory.getBeanClassLoader());
+					array.resolvedElementType = elementType;
+				}
+				catch (Throwable ex) {
+					throw new BeanCreationException(this.beanDefinition.getResourceDescription(), this.beanName,"Error resolving array type for " + argName, ex);
+				}
+			}
+			// 没获取到数组的类型，也没获取到数组元素的类型，则直接设置数组的类型为Object
+			else {
+				elementType = Object.class;
+			}
+		}
+		// 创建指定类型的数组
+		return resolveManagedArray(argName, (List<?>) value, elementType);
+	}
+	// 解析list类型的属性值
+	else if (value instanceof ManagedList) {
+		return resolveManagedList(argName, (List<?>) value);
+	}
+	// 解析set类型的属性值
+	else if (value instanceof ManagedSet) {
+		return resolveManagedSet(argName, (Set<?>) value);
+	}
+	// 解析map类型的属性值
+	else if (value instanceof ManagedMap) {
+		return resolveManagedMap(argName, (Map<?, ?>) value);
+	}
+	// 解析props类型的属性值，props就是key和value均为字符串的map
+	else if (value instanceof ManagedProperties) {
+		Properties original = (Properties) value;
+		// 创建一个拷贝，用于作为解析后的返回值
+		Properties copy = new Properties();
+		for (Map.Entry propEntry : original.entrySet()) {
+			Object propKey = propEntry.getKey();
+			Object propValue = propEntry.getValue();
+			if (propKey instanceof TypedStringValue) {
+				propKey = evaluate((TypedStringValue) propKey);
+			}
+			if (propValue instanceof TypedStringValue) {
+				propValue = evaluate((TypedStringValue) propValue);
+			}
+			copy.put(propKey, propValue);
+		}
+		return copy;
+	}
+	// 解析字符串类型的属性值
+	else if (value instanceof TypedStringValue) {
+		TypedStringValue typedStringValue = (TypedStringValue) value;
+		Object valueObject = evaluate(typedStringValue);
+		try {
+			// 获取属性的目标类型
+			Class<?> resolvedTargetType = resolveTargetType(typedStringValue);
+			if (resolvedTargetType != null) {
+				// 对目标类型的属性进行解析，递归调用
+				return this.typeConverter.convertIfNecessary(valueObject, resolvedTargetType);
+			}
+			// 没有获取到属性的目标对象，则按Object类型返回
+			else {
+				return valueObject;
+			}
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(this.beanDefinition.getResourceDescription(), this.beanName,"Error converting typed String value for " + argName, ex);
+		}
+	}
+	else {
+		return evaluate(value);
+	}
+}
+
+// 解析引用类型的属性值
+private Object resolveReference(Object argName, RuntimeBeanReference ref) {
+	try {
+		// 获取引用的Bean名称
+		String refName = ref.getBeanName();
+		refName = String.valueOf(evaluate(refName));
+		// 如引用的对象在父类容器中，则从父类容器中获取指定的引用对象
+		if (ref.isToParent()) {
+			if (this.beanFactory.getParentBeanFactory() == null) {
+				throw new BeanCreationException(this.beanDefinition.getResourceDescription(), this.beanName,"Can't resolve reference to bean '" + refName +"' in parent factory: no parent factory available");
+			}
+			return this.beanFactory.getParentBeanFactory().getBean(refName);
+		}
+		// 从当前的容器中获取指定的引用Bean对象，如指定的Bean没被实例化，则会递归触发引用Bean的初始化和依赖注入
+		else {
+			Object bean = this.beanFactory.getBean(refName);
+			// 将当前实例化对象的依赖引用对象
+			this.beanFactory.registerDependentBean(refName, this.beanName);
+			return bean;
+		}
+	}
+	catch (BeansException ex) {
+		throw new BeanCreationException(this.beanDefinition.getResourceDescription(), this.beanName"Cannot resolve reference to bean '" + ref.getBeanName() + "'while setting " + argName, ex);
+	}
+}
+
+// 解析array类型的属性
+private Object resolveManagedArray(Object argName, List<?> ml, Class<?> elementType) {
+	// 创建一个指定类型的数组，用于存放和返回解析后的数组
+	Object resolved = Array.newInstance(elementType, ml.size());
+	for (int i = 0; i < ml.size(); i++) {
+		// 递归解析array的每一个元素，并将解析后的值设置到resolved数组中，索引为i
+		Array.set(resolved, i,resolveValueIfNecessary(new KeyedArgName(argName, i), ml.get(i)));
+	}
+	return resolved;
+}
+```
+>Spring如何解析引用类型，内部类及集合类型等属性，属性值解析完成后就可进行依赖注入，依赖注入的过程是Bean实例设置到它所依赖的Bean对象属性上，依赖注入通过bw.setPropertyValues方法实现，该方法也使用委托模式，在BeanWrapper接口中至少定义了方法声明，依赖注入的具体实现交由其实现类BeanWrapperImpl来完成，下面分析BeanWrapperImpl中赖注入相关的源码。
+#### 1.8 BeanWrapperImpl对Bean属性的依赖注入
