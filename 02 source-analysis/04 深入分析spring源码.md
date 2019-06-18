@@ -871,3 +871,274 @@ private Object resolveManagedArray(Object argName, List<?> ml, Class<?> elementT
 ```
 >Spring如何解析引用类型，内部类及集合类型等属性，属性值解析完成后就可进行依赖注入，依赖注入的过程是Bean实例设置到它所依赖的Bean对象属性上，依赖注入通过bw.setPropertyValues方法实现，该方法也使用委托模式，在BeanWrapper接口中至少定义了方法声明，依赖注入的具体实现交由其实现类BeanWrapperImpl来完成，下面分析BeanWrapperImpl中赖注入相关的源码。
 #### 1.8 BeanWrapperImpl对Bean属性的依赖注入
+>BeanWrapperImpl类主要对容器中完成初始化的Bean实例进行属性的依赖注入，即把Bean对象设置到它所依赖的另一个Bean的属性中去。而BeanWrapperImpl中的注入方法由AbstractNestablePropertyAccessor来实现:
+
+```java 
+//org.springframework.beans.BeanWrapperImpl
+// 实现属性依赖注入功能
+private void setPropertyValue(PropertyTokenHolder tokens, PropertyValue pv) throws BeansException {
+	// PropertyTokenHolder主要保存属性的名称、路径，及集合的size等信息
+	String propertyName = tokens.canonicalName;
+	String actualName = tokens.actualName;
+
+	// keys是用来保存集合类型属性的size
+	if (tokens.keys != null) {
+		// 将属性信息拷贝
+		PropertyTokenHolder getterTokens = new PropertyTokenHolder();
+		getterTokens.canonicalName = tokens.canonicalName;
+		getterTokens.actualName = tokens.actualName;
+		getterTokens.keys = new String[tokens.keys.length - 1];
+		System.arraycopy(tokens.keys, 0, getterTokens.keys, 0, tokens.keys.length - 1);
+		Object propValue;
+		try {
+			// 获取属性值，该方法内部使用JDK的内省(Introspector)机制
+            // 调用属性的getter(readerMethod)方法，获取属性的值 
+			propValue = getPropertyValue(getterTokens);
+		}
+		catch (NotReadablePropertyException ex) {
+			throw new NotWritablePropertyException(getRootClass(), this.nestedPath + propertyName,"Cannot access indexed value in property referenced " +"in indexed property path '" + propertyName + "'", ex);
+		}
+		// 获取集合类型属性的长度
+		String key = tokens.keys[tokens.keys.length - 1];
+		if (propValue == null) {
+			if (this.autoGrowNestedPaths) {
+				int lastKeyIndex = tokens.canonicalName.lastIndexOf('[');
+				getterTokens.canonicalName = tokens.canonicalName.substring(0, lastKeyIndex);
+				propValue = setDefaultValue(getterTokens);
+			}
+			else {
+				throw new NullValueInNestedPathException(getRootClass(),this.nestedPath + propertyName,"Cannot access indexed value in property referenced " +
+						"in indexed property path '" + propertyName + "': returned null");
+			}
+		}
+		// 注入array类型的属性值
+		if (propValue.getClass().isArray()) {
+			// 获取属性的描述符
+			PropertyDescriptor pd = getCachedIntrospectionResults().getPropertyDescriptor(actualName);
+			// 获取数组的类型
+			Class requiredType = propValue.getClass().getComponentType();
+			// 获取数组的长度
+			int arrayIndex = Integer.parseInt(key);
+			Object oldValue = null;
+			try {
+				// 获取数组以前初始化的值
+				if (isExtractOldValueForEditor() && arrayIndex < Array.getLength(propValue)) {
+					oldValue = Array.get(propValue, arrayIndex);
+				}
+				// 将属性的值赋值给数组中的元素
+				Object convertedValue = convertIfNecessary(propertyName, oldValue, pv.getValue(),
+						requiredType, TypeDescriptor.nested(property(pd), tokens.keys.length));
+				Array.set(propValue, arrayIndex, convertedValue);
+			}
+			catch (IndexOutOfBoundsException ex) {
+				throw new InvalidPropertyException(getRootClass(), this.nestedPath + propertyName,"Invalid array index in property path '" + propertyName + "'", ex);
+			}
+		}
+		// 注入list类型的属性值
+		else if (propValue instanceof List) {
+			PropertyDescriptor pd = getCachedIntrospectionResults().getPropertyDescriptor(actualName);
+			// 获取list集合的类型
+			Class requiredType = GenericCollectionTypeResolver.getCollectionReturnType(
+					pd.getReadMethod(), tokens.keys.length);
+			List list = (List) propValue;
+			
+			int index = Integer.parseInt(key);
+			Object oldValue = null;
+			if (isExtractOldValueForEditor() && index < list.size()) {
+				oldValue = list.get(index);
+			}
+			// 获取list解析后的属性值
+			Object convertedValue = convertIfNecessary(propertyName, oldValue, pv.getValue(),
+					requiredType, TypeDescriptor.nested(property(pd), tokens.keys.length));
+			// 获取list集合的size
+			int size = list.size();
+			// 如果list的长度大于属性值的长度，则多余的元素赋值为null 
+			if (index >= size && index < this.autoGrowCollectionLimit) {
+				for (int i = size; i < index; i++) {
+					try {
+						list.add(null);
+					}
+					catch (NullPointerException ex) {
+						throw new InvalidPropertyException(getRootClass(), this.nestedPath + propertyName,"Cannot set element with index " + index + " in List of size " +size + ", accessed using property path '" + propertyName + "': List does not support filling up gaps with null elements");
+					}
+				}
+				list.add(convertedValue);
+			}
+			else {
+				try {
+					//为list属性赋值
+					list.set(index, convertedValue);
+				}
+				catch (IndexOutOfBoundsException ex) {
+					throw new InvalidPropertyException(getRootClass(),this.nestedPath + propertyName,"Invalid list index in property path '" + propertyName + "'", ex);
+				}
+			}
+		}
+		// 注入map类型的属性值
+		else if (propValue instanceof Map) {
+			PropertyDescriptor pd = getCachedIntrospectionResults().getPropertyDescriptor(actualName);
+			// 获取map集合key的类型
+			Class mapKeyType = GenericCollectionTypeResolver.getMapKeyReturnType(
+					pd.getReadMethod(), tokens.keys.length);
+			// 获取map集合value的类型
+			Class mapValueType = GenericCollectionTypeResolver.getMapValueReturnType(
+					pd.getReadMethod(), tokens.keys.length);
+			Map map = (Map) propValue;
+			TypeDescriptor typeDescriptor = (mapKeyType != null ?
+					TypeDescriptor.valueOf(mapKeyType) : TypeDescriptor.valueOf(Object.class));
+			// 解析map类型属性key值
+			Object convertedMapKey = convertIfNecessary(null, null, key, mapKeyType, typeDescriptor);
+			Object oldValue = null;
+			if (isExtractOldValueForEditor()) {
+				oldValue = map.get(convertedMapKey);
+			}
+			// 解析map类型属性value值
+			Object convertedMapValue = convertIfNecessary(propertyName, oldValue, pv.getValue(),
+					mapValueType, TypeDescriptor.nested(property(pd), tokens.keys.length));
+			// 将解析后的key和value值赋值给map集合属性
+			map.put(convertedMapKey, convertedMapValue);
+		}
+		// 对非集合类型的属性注入
+		else {
+			throw new InvalidPropertyException(getRootClass(), this.nestedPath + propertyName,
+					"Property referenced in indexed property path '" + propertyName +"' is neither an array nor a List nor a Map; returned value was [" + pv.getValue() + "]");
+		}
+	}
+
+	else {
+		PropertyDescriptor pd = pv.resolvedDescriptor;
+		if (pd == null || !pd.getWriteMethod().getDeclaringClass().isInstance(this.object)) {
+			pd = getCachedIntrospectionResults().getPropertyDescriptor(actualName);
+			// 无法获取到属性名或者属性没有提供setter(写方法)方法
+			if (pd == null || pd.getWriteMethod() == null) {
+				// 如果属性值是可选的，即不是必须的，则忽略该属性值
+				if (pv.isOptional()) {
+					logger.debug("Ignoring optional value for property '" +actualName +"' - property not found on bean class [" +getRootClass().getName() + "]");
+					return;
+				}
+				// 如果属性值是必须的，则抛出无法给属性赋值，因为没提供setter方法异常
+				else {
+					PropertyMatches matches = PropertyMatches.forProperty(propertyName, getRootClass());
+					throw new NotWritablePropertyException(getRootClass(), this.nestedPath +propertyName,matches.buildErrorMessage(),matches.getPossibleMatches());
+				}
+			}
+			pv.getOriginalPropertyValue().resolvedDescriptor = pd;
+		}
+
+		Object oldValue = null;
+		try {
+			Object originalValue = pv.getValue();
+			Object valueToApply = originalValue;
+			if (!Boolean.FALSE.equals(pv.conversionNecessary)) {
+				if (pv.isConverted()) {
+					valueToApply = pv.getConvertedValue();
+				}
+				else {
+					if (isExtractOldValueForEditor() && pd.getReadMethod() != null) {
+						// 获取属性的getter方法(读方法)，JDK内省机制
+						final Method readMethod = pd.getReadMethod();
+						// 如果属性的getter方法不是public访问控制权限的，即访问控制权限比较严格，  
+                        // 则使用JDK的反射机制强行访问非public的方法(暴力读取属性值) 
+						if (!Modifier.isPublic(readMethod.getDeclaringClass().getModifiers()) &&
+								!readMethod.isAccessible()) {
+							if (System.getSecurityManager()!= null) {
+								// 匿名内部类，根据权限修改属性的读取控制限制 
+								AccessController.doPrivileged(new PrivilegedAction<Object>() {
+									public Object run() {
+										readMethod.setAccessible(true);
+										return null;
+									}
+								});
+							}
+							else {
+								readMethod.setAccessible(true);
+							}
+						}
+						try {
+							 // 属性没有提供getter方法时，调用潜在的读取属性值的方法，获取属性值 
+							if (System.getSecurityManager() != null) {
+								oldValue = AccessController.doPrivileged(new PrivilegedExceptionAction<Object>() {
+									public Object run() throws Exception {
+										return readMethod.invoke(object);
+									}
+								}, acc);
+							}
+							else {
+								oldValue = readMethod.invoke(object);
+							}
+						}
+						catch (Exception ex) {
+							if (ex instanceof PrivilegedActionException) {
+								ex = ((PrivilegedActionException) ex).getException();
+							}
+							if (logger.isDebugEnabled()) {
+								logger.debug("Could not read previous value of property '" +
+										this.nestedPath + propertyName + "'", ex);
+							}
+						}
+					}
+					// 设置属性的注入值
+					valueToApply = convertForProperty(propertyName, oldValue, originalValue, pd);
+				}
+				pv.getOriginalPropertyValue().conversionNecessary = (valueToApply != originalValue);
+			}
+			// 根据JDK的内省机制，获取属性的setter(写方法)方法
+			final Method writeMethod = (pd instanceof GenericTypeAwarePropertyDescriptor ?
+					((GenericTypeAwarePropertyDescriptor) pd).getWriteMethodForActualAccess() :
+					pd.getWriteMethod());
+			// 如果属性的setter方法是非public，即访问控制权限比较严格，则使用JDK的反射机制，  
+            // 强行设置setter方法可访问(暴力为属性赋值)  
+			if (!Modifier.isPublic(writeMethod.getDeclaringClass().getModifiers()) && !writeMethod.isAccessible()) {
+				if (System.getSecurityManager()!= null) {
+					AccessController.doPrivileged(new PrivilegedAction<Object>() {
+						public Object run() {
+							writeMethod.setAccessible(true);
+							return null;
+						}
+					});
+				}
+				else {
+					writeMethod.setAccessible(true);
+				}
+			}
+			final Object value = valueToApply;
+			 // 如果使用了JDK的安全机制，则需要权限验证 
+			if (System.getSecurityManager() != null) {
+				try {
+					// 将属性值设置到属性上去 
+					AccessController.doPrivileged(new PrivilegedExceptionAction<Object>() {
+						public Object run() throws Exception {
+							writeMethod.invoke(object, value);
+							return null;
+						}
+					}, acc);
+				}
+				catch (PrivilegedActionException ex) {
+					throw ex.getException();
+				}
+			}
+			else {
+				writeMethod.invoke(this.object, value);
+			}
+		}
+		catch (TypeMismatchException ex) {
+			throw ex;
+		}
+		catch (InvocationTargetException ex) {
+			PropertyChangeEvent propertyChangeEvent =
+					new PropertyChangeEvent(this.rootObject, this.nestedPath + propertyName, oldValue, pv.getValue());
+			if (ex.getTargetException() instanceof ClassCastException) {
+				throw new TypeMismatchException(propertyChangeEvent,pd.getPropertyType(), ex.getTargetException());
+			}
+			else {
+				throw new MethodInvocationException(propertyChangeEvent,ex.getTargetException());
+			}
+		}
+		catch (Exception ex) {
+			PropertyChangeEvent pce =
+					new PropertyChangeEvent(this.rootObject, this.nestedPath + propertyName, oldValue, pv.getValue());
+			throw new MethodInvocationException(pce, ex);
+		}
+	}
+}
+```
