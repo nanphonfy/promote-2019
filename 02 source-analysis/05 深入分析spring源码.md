@@ -1,89 +1,95 @@
-ListAbleBeanFactory
-HierarchicaleanFactory
-ClassPathXmlApplication
-资源定位 配置文件定位
-载入 读取配置文件
-注册 把加载以后的配置文件，解释成BeeanDefinition
+### 1.基于Annotation的依赖注入
+>注解(Annotation)是JDK1.5引入的新特性，简化Bean的配置，某些场合可取代XML。注解可大大简化配置，提高开发速度，不能完全取代XML(更加灵活，发展相对成熟,为大多数开发者熟悉)；注解方式非常简洁，处于发展阶段，XML和注解可以相互配合。  
 
-依赖注入
- 1读取BeanDefinition的信息，获取依赖关系
-BeanWapper
-2实例化，代理对象
-注入：设值
+> IOC容器对于类级别的注解和类内部的注解分两种处理策略：
+>- 类级别的注解：eg.@Component、@Repository、@Controller、@Service及JavaEE6的@ManagedBean和@Named注解，Spring容器根据注解的过滤规则扫描读取注解Bean定义类，并将其注册到IOC容器；
+>- 类内部的注解：eg.@Autowire、@Value、@Resource及EJB和WebService相关注解等（添加在类内部的字段或方法的类内部注解），IOC容器通过Bean后置注解处理器解析Bean内部的注解。
 
-createBeanInstance 创建实例，放入到IOC容器
-populateBean 注入方法，list map 父类 接口
+### 2.AnnotationConfigApplicationContext对注解Bean初始化
+>Spring中管理注解Bean定义的容器有两个：AnnotationConfigApplicationContext和AnnotationConfigWebApplicationContex。  
+这两个类是专门处理Spring注解方式配置的容器，直接依赖于注解作为容器配置信息来源的IOC容器。AnnotationConfigWebApplicationContext是AnnotationConfigApplicationContext的web版本，两者用法及对注解的处理方式没有啥差别。  
+- AnnotationConfigApplicationContext的源码
 
-高级特性主要用来做优化
+```java 
+//org.springframework.context.annotation.AnnotationConfigApplicationContext
+public class AnnotationConfigApplicationContext extends GenericApplicationContext {
+    // 保存一个读取注解的Bean定义读取器，将其设置到容器中
+    private final AnnotatedBeanDefinitionReader reader;
+    // 保存一个扫描指定类路径中注解Bean定义读取器，将其设置到容器中
+    private final ClassPathBeanDefinitionScanner scanner;
+    
+    
+    // 默认构造器，初始化空容器（不包含任何bean信息，调用其register注册配置类，调用refresh刷新容器，触发容器对注解ben载入、解析、注册）
+    public AnnotationConfigApplicationContext() {
+    	this.reader = new AnnotatedBeanDefinitionReader(this);
+    	this.scanner = new ClassPathBeanDefinitionScanner(this);
+    }
+    
+    // 最常用构造器，将涉及配置类传递给该构造函数，实现将相应配置类中的bean自动注册到容器中
+    public AnnotationConfigApplicationContext(Class<?>... annotatedClasses) {
+    	this();
+    	register(annotatedClasses);
+    	refresh();
+    }
+    
+    // 该构造器自动扫描给定包及其子包所有类，自动识别所有bean将其注册到容器中
+    public AnnotationConfigApplicationContext(String... basePackages) {
+    	this();
+    	scan(basePackages);
+    	refresh();
+    }
 
-ClassPathXmlApplication，本身就是一个工厂，这个类是我们自己new出来的，就意味着我们有可能在多线程环境中使用。
+    @Override
+    public void setEnvironment(ConfigurableEnvironment environment) {
+    	super.setEnvironment(environment);
+    	this.reader.setEnvironment(environment);
+    	this.scanner.setEnvironment(environment);
+    }
+    
+    // 为容器的注解bean读取器和注解bean扫描器设置bean名称产生器
+    public void setBeanNameGenerator(BeanNameGenerator beanNameGenerator) {
+    	this.reader.setBeanNameGenerator(beanNameGenerator);
+    	this.scanner.setBeanNameGenerator(beanNameGenerator);
+    	getBeanFactory().registerSingleton(
+    			AnnotationConfigUtils.CONFIGURATION_BEAN_NAME_GENERATOR, beanNameGenerator);
+    }
+    
+    // 为容器注解bean读取器和注解bean扫描器设置作用范围元信息解析器
+    public void setScopeMetadataResolver(ScopeMetadataResolver scopeMetadataResolver) {
+    	this.reader.setScopeMetadataResolver(scopeMetadataResolver);
+    	this.scanner.setScopeMetadataResolver(scopeMetadataResolver);
+    }
+    
+    // 为容器注册一个要被处理的注解bean，新注册的bean必须手动调用容器refresh刷新容器，触发容器对新注册的bean处理
+    public void register(Class<?>... annotatedClasses) {
+    	Assert.notEmpty(annotatedClasses, "At least one annotated class must be specified");
+    	this.reader.register(annotatedClasses);
+    }
+    
+    //扫描指定包路径及子包下的注解类，手动调用refresh刷新容器
+    public void scan(String... basePackages) {
+    	Assert.notEmpty(basePackages, "At least one base package must be specified");
+    	this.scanner.scan(basePackages);
+    }
+    
+    @Override
+    protected void prepareRefresh() {
+    	this.scanner.clearCache();
+    	super.prepareRefresh();
+    }
+}
+```
+>Spring对注解的处理分为两种方式：
+>- 直接将注解Bean注册到容器：  
+可以在初始化容器时注册；也可在容器创建后手动调用注册方法向容器注册，然后手动刷新容器，使容器对注册的注解Bean进行处理；
+>- 通过扫描指定包及其子包下的所有类： 
+在初始化注解容器时指定要自动扫描的路径，若容器创建后向给定路径动态添加了注解Bean，则需手动调用容器扫描的方法，然后手动刷新容器，使得容器对所注册的Bean进行处理。  
+接下来，将会对两种处理方式详细分析其实现过程。
+### 3. AnnotationConfigApplicationContext注册注解Bean
+>创建注解处理容器时，若传入的初始参数是具体的注解Bean定义类时，注解容器读取并注册。  
 
-对象被代理后，相当于把类名都改了，
+- AnnotationConfigApplicationContext通过调用注解Bean定义读取器AnnotatedBeanDefinitionReader的register方法向容器注册指定的注解Bean，注解Bean定义读取器向容器注册注解Bean的源码如下：
+```java 
+// org.springframework.context.annotation.AnnotatedBeanDefinitionReader
 
-后置 前置处理器，类似于模板，得到一个回调
-为AOP的实现做了铺垫，有了基础。
-
-最核心的两个jar包，spring-bean spring-context
-定义的是规范
-工厂的实现，di的实现
-
-spring-core是最顶层，所有项目都要依赖
-
-spring-aop依赖spring-aspects，是其上层建筑。
-定义接口 targetClass MethodInvoker
-从IOC中取得的代理后的对象，对每个方法进行重写
-加入一些切面调用所需要的东西
-
-do开头的方法，都是具体干活的方法
-
-AOP通知，与触发器类似，是主动触发，和数据库专门监听的定时器不一样。
-
-自动注入，注解编程@AutoWiring的功能，自动识别依赖，自动转型。声明的是接口，自动找到该接口实现类（前提：接口只有一个实现）
-
-spring的单例是用Map实现的，一定要保证线程安全。除非手动声明scope，否则默认单例。
-prototype，每get一次就new一个。
-
-IOC判断，若被代理的类实现了一个接口，默认用JDK；若被代理的类没实现任何接口，默认用cglib。
-
-cglib继承子类，所以类型不用强转。
-IOC结束。
---------------------------------------------
-2WH（what、why、how）
-
-AOP设计原理及具体实践
-AOP主线：拆分、合并、解耦
-AOP如何制定规则
-
-一个切面就代表着N个Bean的一个集合，这N个Bean他们都拥有共同点，组成一个切面。
-事务管理时，就用到切面的定义，eg.com.xxx.service.impl.*
-
-bean切面是可交叉的，eg.service.impl 做事务管理、service.impl.*API做日志监听。
-
-归类了在切面中的bean之间的关联点
-
-事务管理：连接点——开启一个事务->执行事务->提交事务|事务回滚->事务提交
-
-异常可自定义，只会监听SQL异常。
-说的代理一般是指普通的bean，AOP不是代理。
-
-异常要通知，利用了IOC中的后置处理（熟悉后置处理的方法）。
-
-方法拦截器，是在AOP里独有的。
-
-切入点：切面中，某一个具体的Bean中的，某一个具体的方法。
-先找包名，再找类名，再找方法名。
-
-代理技术实现的前提：JDK代理和Cglib，本质是持有被代理对象的引用，在调用被代理的方法时，在调用之前加点东西，在调用后加点东西，中间就用自己保持的引用去调用它。
-目标对象，就是代理对象所持有的引用。
-
-通知机制：
-
-连接点：规定切面中方法调用的一些规则。
-切入点：进入切面内部的一个入口（主动调用方法）
-
-连接点是规则，是抽象，切入点是具体方法。
-切面是大规则，切入点是比较详细的规则。
-一旦调用过程中，满足连接点的规则，就会触发一个通知：调用代理写的代码（对用户无感知）
-
-
-通知类型：
+```
