@@ -525,3 +525,11 @@ public interface BeanPostProcessor {
 }
 ```
 >这两个回调的入口都是和容器管理的Bean的生命周期事件紧密相关，可为用户提供在IOC容器初始化Bean过程中自定义的处理操作。
+
+- AbstractAutowireCapableBeanFactory类对容器生成的Bean添加后置处理器
+>BeanPostProcessor后置处理器的调用发生在IOC容器完成对Bean实例的创建和属性的依赖注入完成后，在对Spring依赖注入的源码分析过程中，当第一次调用getBean方法(lazy-init预实例化除外)向IOC容器索取指定Bean时触发容器创建Bean实例并进行依赖注入的过程，其中真正实现创建Bean对象并进行依赖注入的方法是AbstractAutowireCapableBeanFactory类的doCreateBean方法：
+
+```Java 
+
+```
+>为Bean实例对象添加BeanPostProcessor后置处理器的入口的是initializeBean方法。
