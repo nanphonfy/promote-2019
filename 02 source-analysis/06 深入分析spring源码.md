@@ -525,3 +525,148 @@ public interface BeanPostProcessor {
 }
 ```
 >这两个回调的入口都是和容器管理的Bean的生命周期事件紧密相关，可为用户提供在IOC容器初始化Bean过程中自定义的处理操作。
+
+- AbstractAutowireCapableBeanFactory类对容器生成的Bean添加后置处理器
+>BeanPostProcessor后置处理器的调用发生在对Bean实例的创建和属性的依赖注入之后。当第一次调用getBean方法(lazy-init预实例化除外)向IOC容器索取指定Bean时触发创建Bean实例并进行依赖注入的过程，真正实现创建Bean对象并进行依赖注入的方法是AbstractAutowireCapableBeanFactory类的doCreateBean方法。
+
+```java 
+// org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
+// 真正创建Bean的方法 
+protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final Object[] args) {
+	//创建实例对象
+	...
+	
+	// Bean对象初始化，依赖注入在此触发 这个exposedObject在初始化之后返回作为依赖注入完成后的Bean
+	Object exposedObject = bean;
+	try {
+		// 将Bean实例对象封装，并且Bean定义中配置的属性值赋值给实例对象
+		populateBean(beanName, mbd, instanceWrapper);
+		if (exposedObject != null) {
+			//初始化Bean对象,在对Bean实例生成和依赖注入后，对Bean实例初始化 ，为Bean实例应用BeanPostProcessor后置处理器
+			exposedObject = initializeBean(beanName, exposedObject, mbd);
+		}
+	}
+	catch (Throwable ex) {
+		if (ex instanceof BeanCreationException && beanName.equals(((BeanCreationException) ex).getBeanName())) {
+			throw (BeanCreationException) ex;
+		}
+		else {
+			throw new BeanCreationException(mbd.getResourceDescription(), beanName, "Initialization of bean failed", ex);
+		}
+	}
+    ...
+    
+	//为应用返回所需要的实例对象
+	return exposedObject;
+}
+```
+>为Bean实例添加BeanPostProcessor后置处理器的入口的是initializeBean方法。
+- initializeBean方法为Bean添加BeanPostProcessor后置处理器
+
+```java 
+// org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
+// 初始Bean实例，为其添加BeanPostProcessor后置处理器
+protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
+	// JDK的安全机制验证权限
+	if (System.getSecurityManager() != null) {
+		// 实现PrivilegedAction接口的匿名内部类
+		AccessController.doPrivileged(new PrivilegedAction<Object>() {
+			public Object run() {
+			    // 为Bean实例包装相关属性，eg.名称，类加载器，所属容器等
+				invokeAwareMethods(beanName, bean);
+				return null;
+			}
+		}, getAccessControlContext());
+	}
+	else {
+		invokeAwareMethods(beanName, bean);
+	}
+
+	Object wrappedBean = bean;
+	// 对BeanPostProcessor后置处理器的postProcessBeforeInitialization回调方法的调用，为Bean初始化前做一些处理  
+	if (mbd == null || !mbd.isSynthetic()) {
+		wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+	}
+
+	// 调用Bean初始化方法（在Spring Bean定义配置文件中通过init-method属性指定）
+	try {
+		invokeInitMethods(beanName, wrappedBean, mbd);
+	}
+	catch (Throwable ex) {
+		throw new BeanCreationException(
+				(mbd != null ? mbd.getResourceDescription() : null),beanName, "Invocation of init method failed", ex);
+	}
+
+	// 对BeanPostProcessor后置处理器的postProcessAfterInitialization回调方法的调用，为Bean实例初始化后做一些处理
+	if (mbd == null || !mbd.isSynthetic()) {
+		wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+	}
+	return wrappedBean;
+}
+
+// 调用BeanPostProcessor后置处理器实例初始化后的处理方法  
+public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, String beanName)
+		throws BeansException {
+
+	Object result = existingBean;
+	// 遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+	for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
+		// 调用Bean实例所有的后置处理中的初始化后处理方法，为Bean实例对象在初始化之后做一些自定义的处理操作
+		result = beanProcessor.postProcessBeforeInitialization(result, beanName);
+		if (result == null) {
+			return result;
+		}
+	}
+	return result;
+}
+
+// 调用BeanPostProcessor后置处理器实例对象初始化前的处理方法  
+public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName)
+		throws BeansException {
+	
+	Object result = existingBean;
+	// 遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
+	for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
+		// 调用Bean实例所有的后置处理中的初始化前处理方法，为Bean实例对象在初始化之前做一些自定义的处理操作
+		result = beanProcessor.postProcessAfterInitialization(result, beanName);
+		if (result == null) {
+			return result;
+		}
+	}
+	return result;
+}
+```
+>BeanPostProcessor是一个接口，其初始化前的操作方法和初始化后的操作方法均委托其实现子类来实现，在Spring中，BeanPostProcessor的实现子类非常的多，分别完成不同的操作，eg.AOP面向切面编程的注册通知适配器、Bean对象的数据校验、Bean继承属性/方法的合并等，以最简单的AOP切面织入来简单了解其主要的功能。
+- AdvisorAdapterRegistrationManager在Bean对象初始化后注册通知适配器
+>AdvisorAdapterRegistrationManager是BeanPostProcessor的一个实现类，作用:为容器中管理的Bean注册一个面向切面编程的通知适配器，以便在Spring容器为所管理的Bean进行面向切面编程时提供方便。
+
+```java 
+// org.springframework.aop.framework.adapter.AdvisorAdapterRegistrationManager
+// 为容器中管理的Bean注册一个面向切面编程的通知适配器
+public class AdvisorAdapterRegistrationManager implements BeanPostProcessor {
+	// 容器中负责管理切面通知适配器注册的对象
+	private AdvisorAdapterRegistry advisorAdapterRegistry = GlobalAdvisorAdapterRegistry.getInstance();
+
+	public void setAdvisorAdapterRegistry(AdvisorAdapterRegistry advisorAdapterRegistry) {
+		this.advisorAdapterRegistry = advisorAdapterRegistry;
+	}
+
+	// BeanPostProcessor在Bean对象初始化前的操作  
+	public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+		// 没做任何操作，直接返回容器创建的Bean对象 
+		return bean;
+	}
+
+	// BeanPostProcessor在Bean对象初始化后的操作
+	public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		if (bean instanceof AdvisorAdapter){
+			//如果容器创建的Bean实例对象是一个切面通知适配器，则向容器的注册
+			this.advisorAdapterRegistry.registerAdvisorAdapter((AdvisorAdapter) bean);
+		}
+		return bean;
+	}
+}
+```
+>其他BeanPostProcessor接口实现类也类似，都是对Bean对象使用到的一些特性进行处理，或向IOC容器中注册，为创建的Bean实例做一些自定义的功能增加，这些操作是容器初始化Bean时自动触发的，不需要人为干预。
+
+### 5. autowiring实现原理
