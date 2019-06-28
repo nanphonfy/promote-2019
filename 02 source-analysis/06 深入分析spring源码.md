@@ -529,13 +529,13 @@ public interface BeanPostProcessor {
 - AbstractAutowireCapableBeanFactory类对容器生成的Bean添加后置处理器
 >BeanPostProcessor后置处理器的调用发生在对Bean实例的创建和属性的依赖注入之后。当第一次调用getBean方法(lazy-init预实例化除外)向IOC容器索取指定Bean时触发创建Bean实例并进行依赖注入的过程，真正实现创建Bean对象并进行依赖注入的方法是AbstractAutowireCapableBeanFactory类的doCreateBean方法。
 
-```java
+```java 
 // org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
-// 真正创建Bean的方法
+// 真正创建Bean的方法 
 protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final Object[] args) {
 	//创建实例对象
 	...
-
+	
 	// Bean对象初始化，依赖注入在此触发 这个exposedObject在初始化之后返回作为依赖注入完成后的Bean
 	Object exposedObject = bean;
 	try {
@@ -555,7 +555,7 @@ protected Object doCreateBean(final String beanName, final RootBeanDefinition mb
 		}
 	}
     ...
-
+    
 	//为应用返回所需要的实例对象
 	return exposedObject;
 }
@@ -563,7 +563,7 @@ protected Object doCreateBean(final String beanName, final RootBeanDefinition mb
 >为Bean实例添加BeanPostProcessor后置处理器的入口的是initializeBean方法。
 - initializeBean方法为Bean添加BeanPostProcessor后置处理器
 
-```java
+```java 
 // org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
 // 初始Bean实例，为其添加BeanPostProcessor后置处理器
 protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
@@ -583,7 +583,7 @@ protected Object initializeBean(final String beanName, final Object bean, RootBe
 	}
 
 	Object wrappedBean = bean;
-	// 对BeanPostProcessor后置处理器的postProcessBeforeInitialization回调方法的调用，为Bean初始化前做一些处理
+	// 对BeanPostProcessor后置处理器的postProcessBeforeInitialization回调方法的调用，为Bean初始化前做一些处理  
 	if (mbd == null || !mbd.isSynthetic()) {
 		wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
 	}
@@ -604,7 +604,7 @@ protected Object initializeBean(final String beanName, final Object bean, RootBe
 	return wrappedBean;
 }
 
-// 调用BeanPostProcessor后置处理器实例初始化后的处理方法
+// 调用BeanPostProcessor后置处理器实例初始化后的处理方法  
 public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, String beanName)
 		throws BeansException {
 
@@ -620,10 +620,10 @@ public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, S
 	return result;
 }
 
-// 调用BeanPostProcessor后置处理器实例对象初始化前的处理方法
+// 调用BeanPostProcessor后置处理器实例对象初始化前的处理方法  
 public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName)
 		throws BeansException {
-
+	
 	Object result = existingBean;
 	// 遍历容器为所创建的Bean添加的所有BeanPostProcessor后置处理器
 	for (BeanPostProcessor beanProcessor : getBeanPostProcessors()) {
@@ -640,7 +640,7 @@ public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, St
 - AdvisorAdapterRegistrationManager在Bean对象初始化后注册通知适配器
 >AdvisorAdapterRegistrationManager是BeanPostProcessor的一个实现类，作用:为容器中管理的Bean注册一个面向切面编程的通知适配器，以便在Spring容器为所管理的Bean进行面向切面编程时提供方便。
 
-```java
+```java 
 // org.springframework.aop.framework.adapter.AdvisorAdapterRegistrationManager
 // 为容器中管理的Bean注册一个面向切面编程的通知适配器
 public class AdvisorAdapterRegistrationManager implements BeanPostProcessor {
@@ -651,9 +651,9 @@ public class AdvisorAdapterRegistrationManager implements BeanPostProcessor {
 		this.advisorAdapterRegistry = advisorAdapterRegistry;
 	}
 
-	// BeanPostProcessor在Bean对象初始化前的操作
+	// BeanPostProcessor在Bean对象初始化前的操作  
 	public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
-		// 没做任何操作，直接返回容器创建的Bean对象
+		// 没做任何操作，直接返回容器创建的Bean对象 
 		return bean;
 	}
 
@@ -670,3 +670,185 @@ public class AdvisorAdapterRegistrationManager implements BeanPostProcessor {
 >其他BeanPostProcessor接口实现类也类似，都是对Bean对象使用到的一些特性进行处理，或向IOC容器中注册，为创建的Bean实例做一些自定义的功能增加，这些操作是容器初始化Bean时自动触发的，不需要人为干预。
 
 ### 5. autowiring实现原理
+>IOC容器提供两种管理Bean依赖关系的方式：  
+a.显式管理通过BeanDefinition的属性值和构造方法实现Bean依赖关系管理；  
+b.autowiring：IOC容器的依赖自动装配，不需对Bean属性的依赖关系做显式声明，只需在配置好autowiring属性，IOC容器会自动使用反射查找属性的类型和名称，然后基于属性的类型或名称来自动匹配容器中管理的Bean，从而自动完成依赖注入。  
+对Bean的自动装配发生在容器对Bean依赖注入的过程中。容器对Bean实例的属性注入的处理发生在AbstractAutoWireCapableBeanFactory类中的populateBean方法中，通过程序流程分析autowiring的实现原理。
+- AbstractAutoWireCapableBeanFactory对Bean实例进行属性依赖注入
+
+```java 
+// org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory
+//将Bean属性设置到生成的实例对象上
+protected void populateBean(String beanName, RootBeanDefinition mbd, BeanWrapper bw) {
+	// 获取容器在解析Bean定义资源时为BeanDefiniton中设置属性值
+	PropertyValues pvs = mbd.getPropertyValues();
+
+	// 实例对象为null
+	if (bw == null) {
+		if (!pvs.isEmpty()) {
+			throw new BeanCreationException(mbd.getResourceDescription(), beanName, "Cannot apply property values to null instance");
+		}
+		else {
+			// Skip property population phase for null instance.
+			// 实例为null，属性值也为空，不需设置属性值，直接返回 
+			return;
+		}
+	}
+	
+	// 在设置属性前调用Bean的PostProcessor后置处理器
+	boolean continueWithPropertyPopulation = true;
+
+	if (!mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()) {
+		for (BeanPostProcessor bp : getBeanPostProcessors()) {
+			if (bp instanceof InstantiationAwareBeanPostProcessor) {
+				InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+				if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+					continueWithPropertyPopulation = false;
+					break;
+				}
+			}
+		}
+	}
+
+	if (!continueWithPropertyPopulation) {
+		return;
+	}
+
+	// 依赖注入开始，首先处理autowire自动装配的注入
+	if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+			mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+		MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+
+		// 对autowire自动装配的处理，根据Bean名称自动装配注入
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+			autowireByName(beanName, mbd, bw, newPvs);
+		}
+
+		// 根据Bean类型自动装配注入
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+			autowireByType(beanName, mbd, bw, newPvs);
+		}
+
+		pvs = newPvs;
+	}
+
+	// 检查容器是否持有用于处理单例模式Bean关闭时的后置处理器
+	boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+	// Bean实例对象没有依赖，即没继承基类
+	boolean needsDepCheck = (mbd.getDependencyCheck() != RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+	if (hasInstAwareBpps || needsDepCheck) {
+		// 从实例对象中提取属性描述符
+		PropertyDescriptor[] filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+		if (hasInstAwareBpps) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					// 使用BeanPostProcessor处理器处理属性值
+					pvs = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+					if (pvs == null) {
+						return;
+					}
+				}
+			}
+		}
+		if (needsDepCheck) {
+			// 为要设置的属性进行依赖检查
+			checkDependencies(beanName, mbd, filteredPds, pvs);
+		}
+	}
+	// 对属性进行注入
+	applyPropertyValues(beanName, mbd, bw, pvs);
+}
+```
+
+- IOC容器根据Bean名称或类型进行autowiring自动依赖注入
+
+```java 
+//根据类型对属性进行自动依赖注入
+protected void autowireByType(String beanName, AbstractBeanDefinition mbd, BeanWrapper bw, MutablePropertyValues pvs) {
+
+	// 获取用户定义的类型转换器 
+	TypeConverter converter = getCustomTypeConverter();
+	if (converter == null) {
+		converter = bw;
+	}
+
+	// 存放解析的要注入属性
+	Set<String> autowiredBeanNames = new LinkedHashSet<String>(4);
+	// 对Bean对象中非简单属性(不是简单继承的对象，如8中原始类型，字符URL等都是简单属性)进行处理 
+	String[] propertyNames = unsatisfiedNonSimpleProperties(mbd, bw);
+	for (String propertyName : propertyNames) {
+		try {
+			// 获取指定属性名称的属性描述器 
+			PropertyDescriptor pd = bw.getPropertyDescriptor(propertyName);
+			// 不对Object类型的属性进行autowiring自动依赖注入  
+			if (!Object.class.equals(pd.getPropertyType())) {
+				// 获取属性的setter方法
+				MethodParameter methodParam = BeanUtils.getWriteMethodParameter(pd);
+				// 检查指定类型是否可被转换为目标对象的类型
+				boolean eager = !PriorityOrdered.class.isAssignableFrom(bw.getWrappedClass());
+				// 创建一个要被注入的依赖描述 
+				DependencyDescriptor desc = new AutowireByTypeDependencyDescriptor(methodParam, eager);
+				// 根据容器的Bean定义解析依赖关系，返回所有要被注入的Bean对象  
+				Object autowiredArgument = resolveDependency(desc, beanName, autowiredBeanNames, converter);
+				if (autowiredArgument != null) {
+					// 为属性赋值所引用的对象  
+					pvs.add(propertyName, autowiredArgument);
+				}
+				for (String autowiredBeanName : autowiredBeanNames) {
+					//指定名称属性注册依赖Bean名称，进行属性依赖注入 
+					registerDependentBean(autowiredBeanName, beanName);
+					if (logger.isDebugEnabled()) {
+						logger.debug("Autowiring by type from bean name '" + beanName + "' via property '" + propertyName + "' to bean named '" + autowiredBeanName + "'");
+					}
+				}
+				// 释放已自动注入的属性 
+				autowiredBeanNames.clear();
+			}
+		}
+		catch (BeansException ex) {
+			throw new UnsatisfiedDependencyException(mbd.getResourceDescription(), beanName, propertyName, ex);
+		}
+	}
+}
+```
+>通过属性名进行自动依赖注入的相对比通过属性类型进行自动依赖注入要稍微简单一些，但真正实现属性注入的是DefaultSingletonBeanRegistry类的registerDependentBean方法。
+
+- DefaultSingletonBeanRegistry的registerDependentBean方法对属性注入
+
+```java 
+// org.springframework.beans.factory.support.DefaultSingletonBeanRegistry
+// 为指定的Bean注入依赖Bean
+public void registerDependentBean(String beanName, String dependentBeanName) {
+	// 处理Bean名称，将别名转换为规范的Bean名称  
+	String canonicalName = canonicalName(beanName);
+	//多线程同步，保证容器内数据的一致性。先从容器中：bean名称-->全部依赖Bean名称集合找查找给定名称Bean的依赖Bean
+	synchronized (this.dependentBeanMap) {
+		// 获取给定名称Bean的所有依赖Bean名称  
+		Set<String> dependentBeans = this.dependentBeanMap.get(canonicalName);
+		if (dependentBeans == null) {
+			// 为Bean设置依赖Bean信息
+			dependentBeans = new LinkedHashSet<String>(8);
+			this.dependentBeanMap.put(canonicalName, dependentBeans);
+		}
+		// 向容器中：bean名称-->全部依赖Bean名称集合添加Bean的依赖信息，将Bean所依赖的Bean添加到容器的集合中 
+		dependentBeans.add(dependentBeanName);
+	}
+	// 从容器中：bean名称-->指定名称Bean的依赖Bean集合找查找给定名称Bean的依赖Bean
+	synchronized (this.dependenciesForBeanMap) {
+		Set<String> dependenciesForBean = this.dependenciesForBeanMap.get(dependentBeanName);
+		if (dependenciesForBean == null) {
+			dependenciesForBean = new LinkedHashSet<String>(8);
+			this.dependenciesForBeanMap.put(dependentBeanName, dependenciesForBean);
+		}
+		// 向容器中：bean名称-->指定Bean的依赖Bean名称集合添加Bean的依赖信息，将Bean所依赖的Bean添加到容器的集合中  
+		dependenciesForBean.add(canonicalName);
+	}
+}
+```
+>autowiring的实现过程：
+a.对Bean的属性代调用getBean方法，完成依赖Bean的初始化和依赖注入；  
+b.将依赖Bean的属性引用设置到被依赖的Bean属性上；   
+c.将依赖Bean的名称和被依赖Bean的名称存储在IOC容器的集合中。    
+>>IOC容器的autowiring属性自动依赖注入是一个很方便的特性，可简化开发时配置，但也有不足，首先，Bean的依赖关系在配置文件中无法很清楚地看出来，对于维护造成一定困难。其次，由于自动依赖注入是Spring容器自动执行的，容器是不会智能判断的，如果配置不当，将会带来无法预料的后果，所以自动依赖注入特性在使用时还是综合考虑。
