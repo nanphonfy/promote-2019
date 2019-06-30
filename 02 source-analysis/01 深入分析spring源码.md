@@ -138,6 +138,225 @@ service方法
 ```
 >spring为什么是优秀框架，它把停留在理论层次的方法论落地了，而且告诉大家怎么用。
 
+#### 1.1 JDK动态代理
+- 类接口
+```java 
+public interface Person {
+    String getAddress();
+    String getPrice();
+    /**
+     * 租房
+     */
+    void findRoom();
+}
+```
+- 想找租房中介的小明-被代理者
+```java 
+/**
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class XiaoMing implements Person {
+    private String address = "南山区蛇口";
+    private String price = "2800";
+
+    @Override public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    @Override public String getPrice() {
+        return price;
+    }
+
+    public void setPrice(String price) {
+        this.price = price;
+    }
+
+    @Override public void findRoom() {
+        System.out.println(String.format("我想在%s租价位大概%s左右的房子", this.address, this.price));
+        System.out.println("考虑单身公寓或合租主卧");
+        System.out.println("带独卫和私人阳台");
+        System.out.println("有电梯");
+    }
+}
+```
+- 房屋中介-代理者
+```java 
+/**
+ * 租房中介
+ *
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class RentalAgent implements InvocationHandler {
+    /**
+     * 被代理对象的引用作为一个成员变量保存下来
+     **/
+    private Person target;
+
+    public Object getInstance(Person target) {
+        this.target = target;
+        Class clazz = target.getClass();
+        System.out.println("被代理对象的class是:" + clazz);
+        return Proxy.newProxyInstance(clazz.getClassLoader(), clazz.getInterfaces(), this);
+    }
+
+    @Override public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+        System.out.println("我是房屋中介，帮忙挑选心仪房源，赚中介费，实现财富自由赢取白富美");
+        System.out.println("开始进行筛选...");
+        System.out.println("----------------");
+
+        method.invoke(this.target, args);
+
+        System.out.println("----------------");
+        System.out.println("若合适，带你看房");
+        return null;
+    }
+}
+```
+
+- 执行类
+```java 
+/**
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class JdkFindRoomTest {
+    public static void main(String[] args) {
+        try {
+            Person obj = (Person) new RentalAgent().getInstance(new XiaoMing());
+            System.out.println("obj class:" + obj.getClass());
+            obj.findRoom();
+            obj.getAddress();
+
+            /*原理：
+            1.拿到被代理对象的引用，获取它的接口
+            2.JDK代理重新生成一个类，同时实现代理对象所实现的接口
+            3.重新动态生成一个class字节码
+            4.编译*/
+
+            //获取字节码内容
+            byte[] data = ProxyGenerator.generateProxyClass("$Proxy0", new Class[] { Person.class });
+            FileOutputStream os = new FileOutputStream("$Proxy0.class");
+            os.write(data);
+            os.close();
+
+            //是什么?
+            //为什么？
+            //怎么做？
+            // 自定义的类JDK代理
+            /*Person obj = (Person) new NRentalAgent().getInstance(new XiaoMing());
+            System.out.println("obj class:" + obj.getClass());
+            obj.findRoom();*/
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+#### 1.2 CgLib动态代理
+- 小by2想找中介（未实现接口）-被代理者
+```java 
+/**
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class XiaoBy2 {
+    public void findRoom(){
+        System.out.println("我要找环境宜人，安静舒适干净的房子");
+    }
+}
+```
+- cglib代理小by2的要求-代理者
+```java 
+/**
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class CgRentalAgent implements MethodInterceptor {
+    /**
+     * 疑问？
+     * 好像没有持有被代理对象的引用
+     */
+    public Object getInstance(Class clazz) throws Exception{
+        // 生成class类的路径
+        // https://blog.csdn.net/u010811939/article/details/80763336
+        // JDK动态代理生成class文件和cglib动态代理生成class文件
+        System.setProperty(DebuggingClassWriter.DEBUG_LOCATION_PROPERTY, "E://tmp");
+
+        Enhancer enhancer = new Enhancer();
+        //把父类设置为谁？
+        //这一步告诉cglib，生成的子类需要继承哪个类
+        enhancer.setSuperclass(clazz);
+        //设置回调(回调intercept，所以设置this)
+        enhancer.setCallback(this);
+
+        //第一步、生成源代码
+        //第二步、编译成class文件
+        //第三步、加载到JVM中，并返回被代理对象
+        return enhancer.create();
+    }
+
+    /***
+     * 同样做了字节码重组
+     * 对于使用API的用户来说，是无感知的
+     * @param obj
+     * @param method
+     * @param objects
+     * @param methodProxy
+     * @return
+     * @throws Throwable
+     */
+    @Override
+    public Object intercept(Object obj, Method method, Object[] objects, MethodProxy methodProxy)
+            throws Throwable {
+        System.out.println("我是房屋中介，帮忙挑选心仪房源，赚中介费，实现财富自由赢取白富美");
+        System.out.println("开始进行筛选...");
+        System.out.println("----------------");
+
+        /*该obj的引用是由CGLib new出来的
+        cglib new出来后的对象，是被代理对象的子类（继承了我们自己写的那个类）
+        OOP, 在new子类前，实际上默认先调用了我们super()方法，
+        new了子类的同时，必须先new出父类，相当于间接的持有了我们父类的引用
+        子类重写了父类的所有的方法
+        改变子类对象的某些属性，可以间接操作父类的属性*/
+        methodProxy.invokeSuper(obj,objects);
+
+        System.out.println("----------------");
+        System.out.println("若合适，带你看房");
+        return null;
+    }
+}
+```
+- 执行类
+
+```java 
+/**
+ * @author nanphonfy(南风zsr)
+ * @date 2019/6/30
+ */
+public class CglibFindRoomTest {
+    public static void main(String[] args) {
+        try {
+            /*JDK的动态代理是通过接口来进行强制转换的
+            生成后的代理对象，可强制转换为接口*/
+
+            /*CGLib的动态代理是通过生成一个被代理对象的子类，然后重写父类的方法
+            生成后的对象，可强制转换为被代理对象（也就是用自己写的类）
+            子类引用赋值给父类*/
+            XiaoBy2 xiaoBy2 = (XiaoBy2) new CgRentalAgent().getInstance(XiaoBy2.class);
+            xiaoBy2.findRoom();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
 -----------------------------------------------------
 #### 2.2 工厂模式
 >工厂模式不关心过程，只关心结果（结果论）。  
@@ -302,3 +521,16 @@ design patterns
 >只要实现了序列化，就可实现数据的复制。不同类，属性相同也可实现数据拷贝。
 不走构造方法，直接走字节流。
 
+>JDBC template 模板模式  
+ORM rowMapper 策略模式  
+Transactions 代理模式  
+AOP 代理模式  
+websocket ws  
+servlet http  
+web mvc  
+portlet 页面  
+
+AOP 切面 cglib  
+aop config  
+beans BOP   
+core 核心实现逻辑  
