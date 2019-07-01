@@ -416,8 +416,158 @@ public Car getCar(String name){
 	}
 }
 ```
-	
 ---
+
+#### 2.1 简单工厂模式 
+- 基础类
+```java 
+/**
+ * 产品接口：汽车需满足一定的标准
+ * @author nanphonfy(南风zsr)
+ * @date 2019/7/1
+ */
+public interface Computer {
+    /** 获取电脑品牌 **/
+    String getProduct();
+}
+
+public class Apple implements Computer {
+    @Override public String getProduct() {
+        return "Apple";
+    }
+}
+
+......
+```
+- 简单工厂类
+
+```java 
+public class SimpleFactory {
+    public static String APPLE = "Apple";
+    public static String LENOVO = "Lenovo";
+    public static String HUAWEI = "HuaWei";
+    public Computer getCcmputer(String name){
+		/*Spring中的工厂模式
+        Bean
+		BeanFactory（生成Bean）
+		单例的Bean
+		被代理过的Bean
+		最原始的Bean（原型）
+		List类型的Bean
+		作用域不同的Bean*/
+
+		/* getBean
+		非常紊乱，维护困难
+		解耦（松耦合开发）*/
+        if(APPLE.equalsIgnoreCase(name)){
+            // 可能有几千行逻辑
+            return new Apple();
+        }else if(LENOVO.equalsIgnoreCase(name)){
+            // 可能有几千行逻辑
+            return new Lenovo();
+        }else if(HUAWEI.equalsIgnoreCase(name)){
+            // 可能有几千行逻辑
+            return new HuaWei();
+        }else{
+            System.out.println("工厂不支持生产该产品");
+            return null;
+        }
+    }
+}
+```
+#### 2.2 抽象工厂模式 
+- 工厂抽象类
+```java 
+public abstract class AbstractFactory {
+    protected abstract Computer getComputer();
+
+    /**
+     * 这段代码就是动态配置的功能
+     * 固定模式的委派
+     * @param name
+     * @return
+     */
+    public Computer getComputer(String name){
+        if(APPLE.equalsIgnoreCase(name)){
+            return new AppleFactory().getComputer();
+        }else if(LENOVO.equalsIgnoreCase(name)){
+            return new LenovoFactory().getComputer();
+        }else if(HUAWEI.equalsIgnoreCase(name)){
+            return new HuaWeiFactory().getComputer();
+        }else{
+            System.out.println("工厂不支持生产该产品");
+            return null;
+        }
+    }
+}
+```
+- 继承抽象类的工厂
+```java 
+/**
+ * 生产联想电脑的业务逻辑封装
+ * @author nanphonfy(南风zsr)
+ * @date 2019/7/1
+ */
+public class LenovoFactory extends AbstractFactory{
+    @Override protected Computer getComputer() {
+        return new Lenovo();
+    }
+}
+......
+public class DefaultFactory extends AbstractFactory{
+    private AbstractFactory defaultFactory = new LenovoFactory();
+
+    @Override protected Computer getComputer() {
+        return defaultFactory.getComputer();
+    }
+}
+```
+- 执行类
+```java 
+public abstract class AbstractFactoryTest {
+    public static void main(String[] args) {
+        DefaultFactory defaultFactory = new DefaultFactory();
+        System.out.println(defaultFactory.getComputer().getProduct());
+        System.out.println(defaultFactory.getComputer("huawei").getProduct());
+    }
+}
+```
+#### 2.3 方法工厂模式 
+- 工厂流程规范接口
+
+```java 
+/**
+ * 工厂接口：定义了所有工厂的执行标准
+ * @author nanphonfy(南风zsr)
+ * @date 2019/7/1
+ */
+public interface Factory {
+    Computer getComputer();
+}
+```
+- 实现执行标准的工厂
+```java 
+public class HuaWeiFactory implements Factory{
+    @Override public Computer getComputer() {
+        return new HuaWei();
+    }
+}
+......
+```
+- 执行类
+```java 
+public class FuncFactoryTest {
+    public static void main(String[] args) {
+        /*工厂方法模式，用户只需关心产品的生产商
+		各个产品的生产商，都拥有各自的工厂。生产工艺、高科技程度都是不一样*/
+        Factory factory = new AppleFactory();
+        System.out.println(factory.getComputer().getProduct());
+
+        factory = new LenovoFactory();
+        System.out.println(factory.getComputer().getProduct());
+    }
+}
+```
 #### 2.3 单例模式
 - 是什么？为什么要有单例模式？怎么实现？2WH what why how
 >①保证系统启动到停止，全过程只会产生一个实例；  
