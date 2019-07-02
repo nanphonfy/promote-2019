@@ -582,6 +582,65 @@ public class FuncFactoryTest {
 
 - 单例模式的七种写法：  
 ??????????
+#### 3.1 懒汉式单例
+```java 
+/**
+ * 【写法1】懒汉式单例类.第一次调用时进行实例化
+ */
+public class LazySingleton1 {
+    /** 1、将构造方法私有化 **/
+    private LazySingleton1() {}
+    /** 2、声明静态变量保存单例引用 **/
+    private static LazySingleton1 single = null;
+    /** 3、提供静态方法获得单例引用 (不安全的)**/
+    public static LazySingleton1 getInstance() {
+        if (single == null) {
+            single = new LazySingleton1();
+        }
+        return single;
+    }
+}
+
+/**
+ * 【写法2】懒汉式单例类.保证线程安全
+ */
+public class LazySingleton2 {
+    /** 1、将构造方法私有化 **/
+    private LazySingleton2() {}
+    /** 2、声明静态变量保存单例引用 **/
+    private static LazySingleton2 single = null;
+    /** 3、提供静态方法获得单例引用 **/
+    /**为保证多线程下正确访问，给方法加同步锁synchronized，getInstance()始终单线程来访问
+    (慎用  synchronized 关键字，阻塞，性能非常低下的，没充分利用计算机资源，资源浪费)**/
+    public static synchronized LazySingleton2 getInstance() {
+        if (single == null) {
+            single = new LazySingleton2();
+        }
+        return single;
+    }
+}
+/**
+ * 【写法3】懒汉式单例.双重锁检查
+ */
+public class LazySingleton3 {
+    /** 1、将构造方法私有化 **/
+    private LazySingleton3() {}
+    /** 2、声明静态变量保存单例引用 **/
+    private static LazySingleton3 single = null;
+    /** 3、提供静态方法获得单例引用 **/
+    /**保证多线程下的另一种实现方式:双重锁检查，性能：第一次损耗**/
+    public static LazySingleton3 getInstance() {
+        if (single == null) {
+            synchronized (LazySingleton3.class) {
+                if (single == null) {
+                    single = new LazySingleton3();
+                }
+            }
+        }
+        return single;
+    }
+}
+```
 ---
 #### 2.4 委派模式
 >代理模式案例，租房中介和你，是平等关系，委派模式不一样，但是他们的关系是包含或上下级关系。  
