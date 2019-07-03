@@ -640,6 +640,106 @@ public class LazySingleton3 {
         return single;
     }
 }
+
+/**
+ * 【写法4】懒汉式单例.静态内部类
+ */
+public class LazySingleton4 {
+    /*java反射机制下，所有代码都是裸奔的，可拿到private修饰的内容即使加上private也不靠谱*/
+    /**1、声明静态内部类。private私有，tatic保证全局唯一**/
+    private static class LazyHolder {
+        /**final为防止内部误操作，eg.代理模式-GgLib**/
+        private static final LazySingleton4 INSTANCE = new LazySingleton4();
+    }
+    /**2、将默认构造方法私有化**/
+    private LazySingleton4 (){}
+    /** 3、同样提供静态方法获取实例，final确保不能覆盖 **/
+    public static final LazySingleton4 getInstance() {
+        /*用户调用时才执行静态内部类，方法中实现逻辑调用时才分配内存*/
+        return LazyHolder.INSTANCE;
+    }
+    /*	static int a = 1;
+    // 不管该class有没有实例化，static静态块总会在classLoader执行完后加载完毕
+    static{
+        // 静态块中的内容，只能访问静态属性和静态方法
+        // 只要是静态方法或者属性，直接可以用Class的名字就能点出来
+        LazySingleton4.a = 2;
+        // JVM 内存中的静态区，这一块的内容是公共的
+    }*/
+}
+
+// 类装载到JVM中过程
+// 从上往下(必须声明在前，使用在后)
+// 先属性、后方法
+// 先静态、后动态
+
+/**
+ * 【写法5-volatile】懒汉式单例.双重锁检查
+ */
+public class VolatileLazySingleton3 {
+    /** 1、将构造方法私有化 **/
+    private VolatileLazySingleton3() {}
+    /** 2、声明静态变量保存单例引用【volatile关键字】 **/
+    private static volatile VolatileLazySingleton3 single = null;
+    /** 3、提供静态方法获得单例引用 **/
+    /**保证多线程下的另一种实现方式:双重锁检查，性能：第一次损耗**/
+    public static VolatileLazySingleton3 getInstance() {
+        if (single == null) {
+            synchronized (VolatileLazySingleton3.class) {
+                if (single == null) {
+                    single = new VolatileLazySingleton3();
+                }
+            }
+        }
+        return single;
+    }
+}
+```
+#### 3.2 饿汉式单例
+```java 
+/**
+ * 【写法6】饿汉式：类创建时已创建静态的对象不再改变，故天生线程安全
+ */
+public class HungerSingleton1 {
+    public static HungerSingleton1 INSTANCE = new HungerSingleton1();
+    protected HungerSingleton1() {  }
+    private Object readResolve() {
+        return INSTANCE;
+    }
+}
+```
+#### 3.3 登记式单例
+```java 
+/**
+ * 【写法7】类似Spring：将类名注册，下次从MAP获取
+ */
+public class RegisterSingleton1 {
+    private static Map<String,RegisterSingleton1> map = new HashMap<String,RegisterSingleton1>();
+    static {
+        RegisterSingleton1 single = new RegisterSingleton1();
+        map.put(single.getClass().getName(), single);
+    }
+    /**保护的默认构造器**/
+    protected RegisterSingleton1(){}
+    /**静态工厂方法：返还此类惟一实例**/
+    public static RegisterSingleton1 getInstance(String name) {
+        if(name == null) {
+            name = RegisterSingleton1.class.getName();
+        }
+        if(map.get(name) == null) {
+            try {
+                map.put(name, (RegisterSingleton1) Class.forName(name).newInstance());
+            } catch (InstantiationException e) {
+                e.printStackTrace();
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();
+            } catch (ClassNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
+        return map.get(name);
+    }
+}
 ```
 ---
 #### 2.4 委派模式
@@ -670,6 +770,47 @@ IOC容器中，有一个Register的东西（为了告诉容器，在这个类被
 
 >工厂模式和委派模式不一样，工厂制定的是产品，委派制定的是方法（或执行者）。
 
+- 案例
+```java 
+public interface IExector {
+    /**员工干活**/
+    void doing();
+}
+
+/**
+ * 程序员
+ */
+public class Programmer implements IExector{
+    @Override public void doing() {
+        System.out.println("开发智能保顾里程碑需求...");
+    }
+}
+......
+
+/**
+ * 项目经理
+ */
+public class PmDispatcher implements IExector{
+    private IExector iExector;
+
+    public PmDispatcher(IExector iExector) {
+        this.iExector = iExector;
+    }
+
+    @Override public void doing() {
+        iExector.doing();
+    }
+}
+
+public class PmDispatcherTest{
+    public static void main(String[] args) {
+        // 表面上项目经理在干活，实际干活的是程序员——干活是我，功劳是你
+        PmDispatcher dispatcher = new PmDispatcher(new Programmer());
+        dispatcher.doing();
+    }
+}
+```
+
 ---
 #### 2.5 策略模式
 >过程不同，但结果一样。
@@ -677,6 +818,43 @@ IOC容器中，有一个Register的东西（为了告诉容器，在这个类被
 - 案例
 >人和目的地：地图导航输入起点、目的地（结果不变），会有多种路线供选择（驾车、公交、步行、骑行->策略）。
 >>策略模式非常简单。
+
+- 案例
+```java 
+/**
+ * 比较器
+ */
+public interface Comparator {
+    int compareTo(Object obj1,Object obj2);
+}
+
+public class NumberComparator implements Comparator{
+    @Override public int compareTo(Object obj1, Object obj2) {
+        // 执行逻辑
+        return 0;
+    }
+}
+......
+public class StrategyTest {
+    public static void main(String[] args) {
+        // 自定义的策略模式
+        // new MyList().sort(new NumberComparator());
+
+        // JDK的策略模式
+        List<Long> numbers = new ArrayList<Long>();
+        Collections.sort(numbers, new java.util.Comparator<Long>() {
+            @Override
+            // 返回值是固定的
+            // 0 、-1 、1
+            // 0 、 >0 、<0
+            public int compare(Long o1, Long o2) {
+                // 中间逻辑是不一样的
+                return 0;
+            }
+        });
+    }
+}
+```
 
 ---
 #### 2.6 原型模式
