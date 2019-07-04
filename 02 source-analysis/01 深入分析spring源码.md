@@ -867,6 +867,7 @@ java的克隆，就是原型模式的实现。
 9种模式  
 spring-jdbc用模板模式  
 
+#### 2.7 模板模式
 - 模板模式：执行流程一样，但中间有些步骤不同。
 
 - 案例 
@@ -884,8 +885,60 @@ spring-jdbc用模板模式
 4、执行语句集；
 5、结果集ResultSet 游标。
 ORM(?)
-
 - 目的不是学会用，而是学会怎么去思考。
+
+
+```java 
+// 饮料机
+public abstract class Bevegrage {
+    // 不能被重写
+    public final void create() {
+        // 1、把水烧开
+        boilWater();
+        // 2、把杯子准备好、原材料放杯中
+        pourInCup();
+        // 3、用水冲泡
+        brew();
+        // 4、添加辅料
+        addCoundiments();
+    }
+
+    public abstract void pourInCup();
+
+    public abstract void addCoundiments();
+
+    public void brew() {
+        System.out.println("将开水放入杯中进行冲泡");
+    }
+
+    public void boilWater() {
+        System.out.println("烧开水，烧到100度可以起锅了");
+    }
+}
+
+public class Coffee  extends Bevegrage{
+	// 原材料放入杯中
+	@Override
+	public void pourInCup() {
+		System.out.println("将咖啡倒入杯中");
+	}
+
+	// 放辅料
+	@Override
+	public void addCoundiments() {
+		System.out.println("添加牛奶和糖");
+	}
+}
+......
+public class TemplateTest {
+	public static void main(String[] args) {
+		Coffee coffee = new Coffee();
+		coffee.create();
+		Tea tea = new Tea();
+		tea.create();
+	}
+}
+```
 
 ---
 ### 3 总结
