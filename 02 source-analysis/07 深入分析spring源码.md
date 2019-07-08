@@ -80,25 +80,26 @@ AOP编程，spring帮我们实现了，完全解耦，通知机制的设计，�
 
 事件机制，先注册，后触发（异步执行）。  
 
-
+- AOP相关类的关系
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/source-analysis/07/spring-aop.png)
 
 
 ```java 
 // org.springframework.aop.framework.JdkDynamicAopProxy
 /**
-	 * 获取代理类要实现的接口，除Advised对象中配置的，还会加上SpringProxy,Advised(opaque=false)，检查上面得到的接口中有没有定义equals或hashcode的接口，调用Proxy.newProxyInstance创建对象（ClassLoader loaderClass<?>[] interfaces,InvocationHandler h）
-	 * @param classLoader the class loader to create the proxy with
-	 * (or {@code null} for the low-level proxy facility's default)
-	 * @return
-     */
-	public Object getProxy(ClassLoader classLoader) {
-		if (logger.isDebugEnabled()) {
-			logger.debug("Creating JDK dynamic proxy: target source is " + this.advised.getTargetSource());
-		}
-		Class[] proxiedInterfaces = AopProxyUtils.completeProxiedInterfaces(this.advised);
-		findDefinedEqualsAndHashCodeMethods(proxiedInterfaces);
-		return Proxy.newProxyInstance(classLoader, proxiedInterfaces, this);
+ * 获取代理类要实现的接口，除Advised对象中配置的，还会加上SpringProxy,Advised(opaque=false)，检查上面得到的接口中有没有定义equals或hashcode的接口，调用Proxy.newProxyInstance创建对象（ClassLoader loaderClass<?>[] interfaces,InvocationHandler h）
+ * @param classLoader the class loader to create the proxy with
+ * (or {@code null} for the low-level proxy facility's default)
+ * @return
+ */
+public Object getProxy(ClassLoader classLoader) {
+	if (logger.isDebugEnabled()) {
+		logger.debug("Creating JDK dynamic proxy: target source is " + this.advised.getTargetSource());
 	}
+	Class[] proxiedInterfaces = AopProxyUtils.completeProxiedInterfaces(this.advised);
+	findDefinedEqualsAndHashCodeMethods(proxiedInterfaces);
+	return Proxy.newProxyInstance(classLoader, proxiedInterfaces, this);
+}
 ```
 >代理对象生成了，那切面如何织入？
 InvocationHandler是JDK动态代理的核心，生成的代理对象的方法调用都会委托到InvocationHandler.invoke()方法。而JdkDynamicAopProxy类也实现了InvocationHandler——分析该类实现的invoke()方法——AOP是如何织入切面的。
@@ -108,92 +109,6 @@ InvocationHandler是JDK动态代理的核心，生成的代理对象的方法调
 ```java 
 // org.springframework.aop.framework.JdkDynamicAopProxy
 public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-	MethodInvocation invocation;
-	Object oldProxy = null;
-	boolean setProxyContext = false;
-
-	TargetSource targetSource = this.advised.targetSource;
-	Class targetClass = null;
-	Object target = null;
-
-	try {
-		if (!this.equalsDefined && AopUtils.isEqualsMethod(method)) {
-			// The target does not implement the equals(Object) method itself.
-			return equals(args[0]);
-		}
-		if (!this.hashCodeDefined && AopUtils.isHashCodeMethod(method)) {
-			// The target does not implement the hashCode() method itself.
-			return hashCode();
-		}
-		// advised接口或其父接口中定义的方法，直接反射，不应用通知
-		if (!this.advised.opaque && method.getDeclaringClass().isInterface() &&
-				method.getDeclaringClass().isAssignableFrom(Advised.class)) {
-			// Service invocations on ProxyConfig with the proxy config...
-			return AopUtils.invokeJoinpointUsingReflection(this.advised, method, args);
-		}
-
-		Object retVal;
-
-		if (this.advised.exposeProxy) {
-			// Make invocation available if necessary.
-			oldProxy = AopContext.setCurrentProxy(proxy);
-			setProxyContext = true;
-		}
-
-		// May be null. Get as late as possible to minimize the time we "own" the target,
-		// in case it comes from a pool.
-		// 获取目标对象类
-		target = targetSource.getTarget();
-		if (target != null) {
-			targetClass = target.getClass();
-		}
-
-		// Get the interception chain for this method.
-		// 获取可映射到此方法上的Interception列表
-		// 拦截器链是AOP加上去的，目的：为环绕通知做准备
-		List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
-
-		// Check whether we have any advice. If we don't, we can fallback on direct
-		// reflective invocation of the target, and avoid creating a MethodInvocation.
-		// 若没可应用到此方法的通知(Interceptor)，直接反射调用method.invoke(target，args)
-		if (chain.isEmpty()) {
-			// We can skip creating a MethodInvocation: just invoke the target directly
-			// Note that the final invoker must be an InvokerInterceptor so we know it does
-			// nothing but a reflective operation on the target, and no hot swapping or fancy proxying.
-			retVal = AopUtils.invokeJoinpointUsingReflection(target, method, args);
-		}
-		else {
-			// We need to create a method invocation...
-			// 创建MethodInvocation
-			invocation = new ReflectiveMethodInvocation(proxy, target, method, args, targetClass, chain);
-			// Proceed to the joinpoint through the interceptor chain.
-			retVal = invocation.proceed();
-		}
-
-		// Massage return value if necessary.
-		Class<?> returnType = method.getReturnType();
-		if (retVal != null && retVal == target && returnType.isInstance(proxy) &&
-				!RawTargetAccess.class.isAssignableFrom(method.getDeclaringClass())) {
-			// Special case: it returned "this" and the return type of the method
-			// is type-compatible. Note that we can't help if the target sets
-			// a reference to itself in another returned object.
-			retVal = proxy;
-		} else if (retVal == null && returnType != Void.TYPE && returnType.isPrimitive()) {
-			throw new AopInvocationException("Null return value from advice does not match primitive return type for: " + method);
-		}
-		return retVal;
-	}
-	finally {
-		if (target != null && !targetSource.isStatic()) {
-			// Must have come from TargetSource.
-			targetSource.releaseTarget(target);
-		}
-		if (setProxyContext) {
-			// Restore old proxy.
-			AopContext.setCurrentProxy(oldProxy);
-		}
-	}
-}public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 	MethodInvocation invocation;
 	Object oldProxy = null;
 	boolean setProxyContext = false;
@@ -399,3 +314,37 @@ public Object proceed() throws Throwable {
     }
 }
 ```
+>AOP到底能干嘛？  
+BOP编程，由Factory执行动作，IOC容器
+AOP工厂生产出来的bean是可以放入IOC容器中的
+看源码最重要的是入口-Factory。  
+getProxy方法用来获取一个代理后的bean，跟IOC容器的getBean有异曲同工之妙。  
+FactoryBean统一了标准，IOC容器定位、加载、注册、初始化、注入。  
+而AOP的Factory依赖于IOC容器，先等IOC容器启动后，进行二次操作。  
+AOP不用执行创建对象的操作（定位、加载、注册、初始化、注入），直接从IOC容器中取。  
+AOP的bean没有继承BeanFactory。  
+IOC已经是代理类了，那么AOP中，是对代理类的二次操作（深操作），监听每个动作都要被管控。
+除了原型模式外，其余都是被代理的。  
+AOP最核心的东西：代理。主要两种：JDK代理、Cglib。  
+MethodInterceptor[] interceptors = registry.getInterceptors(advisor);  
+由切点进入切面，切点实际上就是Method。通知的动作通知前、后置处理器。切点，转换为MethodInterceptor，保存到一个容器里，该容器是链表结构，一定是有顺序的，它知道上一个和下一个是谁。   
+有了这种结构，AOP就可以应用自如。  
+AOP为什么能用来做权限控制，得益于这种拦截器链表的设计。  
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Advised config, Method method, Class targetClass)   
+传进去的config可能是xml，也可能是注解，最终都会转换为AopConfig，只是注解定位时读的是class。
+链表结构操作的一种较经典的方式  
+Filter  
+Filter Chain  
+
+>before->open开启事务  
+throwing->rollback回滚  
+after->commit提交事务  
+>>1、加载配置信息，解析成AopConfig；  
+2、交给AopProxyFactory，调用一个createAopProxy方法；  
+JdkDynamicAopProxy调用AdvisedSupport的getInterceptorsAndDynamicInterceptionAdvice方法得到方法拦截器链，并保存到一个容器（List，IOC容器是Map），递归执行拦截器方法proceed方法。
+
+>MethodInterceptor容器是List，IOC容器是一个ConcurrentHashMap。  
+最终就是由一个Advisor来调用切面中的方法。  
+Cglib调用链：getCallbacks、advised.getInterceptorsAndDynamicInterceptionAdvice
+JDK代理和Cglib有何区别？AOP有自动判断，若实现interface默认用JDK，否则使用Cglib，最终目的都是扫描所有切点，形成拦截器链。  
+JDK性能更低。
