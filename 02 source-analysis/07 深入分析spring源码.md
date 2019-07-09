@@ -80,9 +80,29 @@ AOP编程，spring帮我们实现了，完全解耦，通知机制的设计，�
 
 事件机制，先注册，后触发（异步执行）。  
 
-- AOP相关类的关系
+
+---
+
+- AOP相关类的关系  
 ![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/source-analysis/07/spring-aop.png)
 
+>- 切面（Aspect）："一个关注点的模块化，该关注点可能会横切多个对象”。切面在ApplicationContext的<aop:aspect>中配置；
+>- 连接点（Joinpoint）：程序执行中的某一行为，eg.UserService.get或UserService.delete抛出异常等行为;
+>- 通知（Advice）：切面对某连接点产生的动作。一个切面可包含多个Advice;  
+>- 切入点（Pointcut）：匹配连接点的断言，在AOP中通知和一个切入点表达式关联。切面中所有通知所关注的连接点，都由切入点表达式来决定;
+>- 目标对象（TargetObject）：被一个或多个切面通知的对象。eg.AServcieImpl和BServiceImpl实际运行时，AOP用代理实现，实际AOP操作的是TargetObject的代理对象；
+>- AOP代理（AOPProxy）：AOP中有两种代理：JDK动态代理、CGLIB代理。默认下，TargetObject实现接口时，采用JDK动态代理；反之，采用CGLIB代理。  
+强制使用CGLIB代理需将<aop:config>的proxy-target-class属性设为true。
+>- 通知（Advice）类型：  
+>>①前置通知（Beforeadvice）：某连接点（JoinPoint）执行前的通知，但该通知不能阻止连接点前的执行。ApplicationContext中在<aop:aspect>里用<aop:before>声明。eg.TestAspect中的doBefore方法；  
+②后置通知（Afteradvice）：当某连接点退出时执行的通知（正常返回|异常退出）。ApplicationContext在<aop:aspect>里用<aop:after>声明。eg.ServiceAspect的returnAfter方法，抛出异常时returnAfter方法仍执行；  
+③返回后通知（Afterreturnadvice）：在某连接点正常完成后执行的通知，不包括抛出异常情况。ApplicationContext中<aop:aspect>里用<after-returning>声明；  
+④环绕通知（Aroundadvice）：包围一个连接点的通知，类似Web中Servlet中Filter的doFilter方法。可在方法的调用前后完成自定义行为，也可选择不执行。ApplicationContext中<aop:aspect>里用<aop:around>声明；  
+⑤抛出异常后通知（Afterthrowingadvice）：在方法抛出异常退出时执行的通知。ApplicationContext在<aop:aspect>里用<aop:after-throwing>声明；  
+
+>注：可将多个通知应用到一个目标对象上，即可将多个切面织入到同一目标对象。  
+AOP可基于两种方式：注解方式、xml配置方式。
+使用注解AOP分两步：第一步在xml中声明激活自动扫描组件功能，同时激活自动代理功能（来测试AOP的注解功能），第二步为Aspect切面类添加注解。
 
 ```java 
 // org.springframework.aop.framework.JdkDynamicAopProxy
