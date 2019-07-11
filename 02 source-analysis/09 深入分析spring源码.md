@@ -285,13 +285,15 @@ protected final ModelAndView handleInternal(HttpServletRequest request,
 	return invokeHandleMethod(request, response, handlerMethod);
 }
 
+// 根据url获取处理请求的方法
 // org.springframework.web.servlet.handler.AbstractHandlerMethodMapping
 protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Exception {
+    // 若请求url为http://localhost:8080/web/hello.json，则lookupPath=web/hello.json
     String lookupPath = getUrlPathHelper().getLookupPathForRequest(request);
     if (logger.isDebugEnabled()) {
     	logger.debug("Looking up handler method for path " + lookupPath);
     }
-    
+    // 遍历controller上的所有方法，获取url匹配方法
     HandlerMethod handlerMethod = lookupHandlerMethod(lookupPath, request);
     
     if (logger.isDebugEnabled()) {
@@ -306,6 +308,7 @@ protected HandlerMethod getHandlerInternal(HttpServletRequest request) throws Ex
     return (handlerMethod != null) ? handlerMethod.createWithResolvedBean() : null;
     }
   
+// 获取处理请求的方法，执行并返回结果视图
 // org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter
 private ModelAndView invokeHandleMethod(HttpServletRequest request,
 		HttpServletResponse response, HandlerMethod handlerMethod) throws Exception {
@@ -348,5 +351,71 @@ private ModelAndView invokeHandleMethod(HttpServletRequest request,
 	}
 
 	return getModelAndView(mavContainer, modelFactory, webRequest);
+}
+```
+>requestMappingMethod.invokeAndHandle最终目的:完成Request参数和方法参数上数据的绑定。
+SpringMVC提供两种Request参数到方法中参数的绑定方式:  
+①通过注解进行绑定,@RequestParam;  
+②通过参数名称进行绑定.  
+>使用注解绑定,只要方法参数前声明@RequestParam("a"),就可将request中参数a的值绑定到方法参数上。使用参数名称绑定，前提：必须获取方法参数名称,Java反射只提供获取方法的参数类型,并没提供获取参数名称的方法.解决该问题：用asm框架读取字节码,获取方法参数名称。asm框架是一个字节码操作框架（建议使用注解）。
+
+```java 
+// org.springframework.web.method.support.InvocableHandlerMethod
+public final Object invokeForRequest(NativeWebRequest request,
+									 ModelAndViewContainer mavContainer,
+									 Object... providedArgs) throws Exception {
+	Object[] args = getMethodArgumentValues(request, mavContainer, providedArgs);
+
+	if (logger.isTraceEnabled()) {
+		StringBuilder builder = new StringBuilder("Invoking [");
+		builder.append(this.getMethod().getName()).append("] method with arguments ");
+		builder.append(Arrays.asList(args));
+		logger.trace(builder.toString());
+	}
+
+	Object returnValue = invoke(args);
+
+	if (logger.isTraceEnabled()) {
+		logger.trace("Method [" + this.getMethod().getName() + "] returned [" + returnValue + "]");
+	}
+
+	return returnValue;
+}
+
+// org.springframework.web.method.support.InvocableHandlerMethod
+private Object[] getMethodArgumentValues(
+		NativeWebRequest request, ModelAndViewContainer mavContainer,
+		Object... providedArgs) throws Exception {
+
+	MethodParameter[] parameters = getMethodParameters();
+	Object[] args = new Object[parameters.length];
+	for (int i = 0; i < parameters.length; i++) {
+		MethodParameter parameter = parameters[i];
+		parameter.initParameterNameDiscovery(parameterNameDiscoverer);
+		GenericTypeResolver.resolveParameterType(parameter, getBean().getClass());
+
+		args[i] = resolveProvidedArgument(parameter, providedArgs);
+		if (args[i] != null) {
+			continue;
+		}
+
+		if (argumentResolvers.supportsParameter(parameter)) {
+			try {
+				args[i] = argumentResolvers.resolveArgument(parameter, mavContainer, request, dataBinderFactory);
+				continue;
+			} catch (Exception ex) {
+				if (logger.isTraceEnabled()) {
+					logger.trace(getArgumentResolutionErrorMessage("Error resolving argument", i), ex);
+				}
+				throw ex;
+			}
+		}
+
+		if (args[i] == null) {
+			String msg = getArgumentResolutionErrorMessage("No suitable resolver for argument", i);
+			throw new IllegalStateException(msg);
+		}
+	}
+	return args;
 }
 ```
