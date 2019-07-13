@@ -77,6 +77,8 @@ protected void detectHandlers() throws BeansException {
 }
 ```
 
+>determineUrlsForHandler(String beanName)作用：获取每个Controller的url,不同子类不同实现，典型模板设计模式。开发用的最多的：注解配置Controller中的url,BeanNameUrlHandlerMapping是AbstractDetectingUrlHandlerMapping的子类,处理注解形式的url映射。
+- 分析BeanNameUrlHandlerMapping如何查beanName上所有映射url
 
 ```java 
 // org.springframework.web.servlet.handler.BeanNameUrlHandlerMapping
@@ -101,8 +103,10 @@ protected String[] determineUrlsForHandler(String beanName) {
 	return StringUtils.toStringArray(urls);
 }
 ```
+>HandlerMapping组件已建立所有url和Controller的对应关系。  
 
 #### 1.2 根据url找到对应Controller方法
+>下面分析第二个步骤——由请求触发的,故入口为DispatcherServlet的核心方法：doService()，核心逻辑由doDispatch()实现。
 - DispatcherServlet的核心方法:doService()
 
 ```java 
@@ -252,6 +256,9 @@ protected void doDispatch(HttpServletRequest request, HttpServletResponse respon
 	}
 }
 ```
+>getHandler(processedRequest)实际上从HandlerMapping中找到url和Controller的对应关系
+，即第一个步骤:建立Map<url,Controller>。最终处理Request的是Controller的方法,要进一步确认Controller中处理Request的方法。
+
 #### 1.3 反射调用处理请求方法，返回结果视图
 >根据url确定Controller中处理请求的方法,然后通过反射获取该方法上的注解和参数,解析方法和参数上的注解,最后反射调用方法获取ModelAndView结果视图。
 
@@ -419,3 +426,4 @@ private Object[] getMethodArgumentValues(
 	return args;
 }
 ```
+>asm框架获取方法参数——方法参数列表获取到,就可直接方法调用，整个请求过程中最复杂的一步。
