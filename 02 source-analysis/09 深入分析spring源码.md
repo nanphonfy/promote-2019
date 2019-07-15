@@ -1,3 +1,4 @@
+### 1 源码分析
 
 >web.xml配置一个dispatcherservlet（启动入口），实现Aware接口，能够得到ApplicationContext->默认加载IOC容器（ApplicationContext）->开始扫描spring mvc配置（扫描注解controller/requestmapping/view的配置），插件（拦截器、转换器、视图解析器）->解析成一个handlermapping的list，保存url和具体的执行方对应关系。
 
@@ -428,10 +429,8 @@ private Object[] getMethodArgumentValues(
 ```
 >asm框架获取方法参数——方法参数列表获取到,就可直接方法调用，整个请求过程中最复杂的一步。
 
-
 #### 2 SpringMVC优化
 >前面对工作原理、源码进行分析，有几个优化点:
 >- 1.Controller若能保持单例,尽量用单例（可减少创建、回收对象的开销），即若Controller的类变量和实例变量可以以方法形参声明的尽量以方法的形参声明,不要以类变量和实例变量声明,这样可避免线程安全问题；
 >- 2.处理Request方法的形参务必加上@RequestParam注解（可避免SpringMVC使用asm框架读取class文件获取方法参数名的过程）。即使MVC对缓存了方法参数名，也不要读取class文件--更好；
 >- 3.阅读源码发现SpringMVC没缓存对处理url的方法（每次都要根据请求url去匹配Controller中的方法url）,若缓存url和Method关系,会带来性能提升?问题：负责解析url和Method对应关系的ServletHandlerMethodResolver是一个private的内部类,不能直接继承该类增强代码,必须要该代码后重新编译。当然,若有缓存,必须考虑线程安全问题。
-
