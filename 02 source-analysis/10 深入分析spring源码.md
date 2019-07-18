@@ -1,159 +1,5 @@
 - 自定义ApplicationContext
 ```java 
-public class NApplicationContext {
-	/** 模拟spring的ioc容器 **/
-	private Map<String,Object> instanceMapping = new ConcurrentHashMap<>();
-
-	/** 类似内部配置信息(类外面看不到)只能通过getBean间接调用，看到ioc容器 **/
-	private List<String> classCache = new ArrayList<>();
-
-	private Properties config = new Properties();
-
-	public static void main(String[] args) {
-		NApplicationContext context = new NApplicationContext("application.properties");
-	}
-
-	public NApplicationContext(String location){
-		InputStream is = null;
-		try{
-			// 1、定位
-			is = this.getClass().getClassLoader().getResourceAsStream(location);
-			// 2、载入
-			config.load(is);
-			// 3、注册（找出所有class，保存）
-			String packageName = config.getProperty("scanPackage");
-			doRegister(packageName);
-			// 4、实例化需要ioc的对象(@NService，@NController等)，循环class
-			doCreateBean();
-			// 5、注入
-			populate();
-			System.out.println("<<===自定义的N-IOC容器已初始化...===>");
-		}catch(Exception e){
-			e.printStackTrace();
-		}
-	}
-
-	/**
-	 * 找出符合条件的class，注册到缓存
-	 * @param packageName
-     */
-	private void doRegister(String packageName){
-		String path = packageName.replaceAll("\\.", "\\/");
-		URL url = this.getClass().getClassLoader().getResource(path);
-		File dir = new File(url.getFile());
-		for (File file : dir.listFiles()) {
-			// 若为文件夹，则递归
-			if(file.isDirectory()){
-				doRegister(packageName + "." + file.getName());
-			}else{
-				classCache.add(packageName + "." + file.getName().replace(".class", "").trim());
-			}
-		}
-	}
-	
-	private void doCreateBean(){
-		/*检查有否注册信息（保存所有class名字）
-		eg.BeanDefinition保存了类的名字，也保存类和类之间的关系(Map/list/Set/ref/parent)
-		类之间的复杂依赖关系，暂不考虑，只考虑最简单场景。
-		processArray*/
-		if (classCache.size() == 0) {
-			return;
-		}
-
-		try {
-			for (String className : classCache) {
-				// 为了简单，直接使用反射，暂不考虑JDK或Cglib动态代理
-				Class<?> clazz = Class.forName(className);
-
-				// 哪个类需初始化、不需初始化，只要加了@NController、@NService都需初始化
-				if (clazz.isAnnotationPresent(NController.class)) {
-					// 名字默认为类名首字母小写
-					String id = lowerFirstChar(clazz.getSimpleName());
-					instanceMapping.put(id, clazz.newInstance());
-				} else if (clazz.isAnnotationPresent(NService.class)) {
-					NService service = clazz.getAnnotation(NService.class);
-					// 若设置自定义名字，则优先用自定义名字
-					String id = service.value();
-					if (!"".equals(id.trim())) {
-						instanceMapping.put(id, clazz.newInstance());
-						continue;
-					}
-
-					/*若为空，则用默认规则
-					 1、类名首字母小写
-					 若该类为接口
-					 2、可根据类型类匹配*/
-					Class<?>[] interfaces = clazz.getInterfaces();
-					// 若该类实现了接口，则用接口类型作为id
-					for (Class<?> i : interfaces) {
-						instanceMapping.put(i.getName(), clazz.newInstance());
-					}
-				} else {
-					continue;
-				}
-			}
-		} catch (Exception e) {
-			e.printStackTrace();
-		}
-	}
-
-	/**
-	 * 依赖注入
-	 */
-	private void populate(){
-		// 判断ioc容器是否为空
-		if (instanceMapping.isEmpty()) {
-			return;
-		}
-
-		for (Entry<String, Object> entry : instanceMapping.entrySet()) {
-			// 取出所有属性(包括私有)
-			Field[] fields = entry.getValue().getClass().getDeclaredFields();
-			for (Field field : fields) {
-				if (!field.isAnnotationPresent(NAutowired.class)) {
-					continue;
-				}
-				NAutowired autowired = field.getAnnotation(NAutowired.class);
-				String id = autowired.value().trim();
-				// 若id为空，即没自定义，则默认根据类型注入
-				if ("".equals(id)) {
-					id = field.getType().getName();
-				}
-				// 开放私有变量访问权限
-				field.setAccessible(true);
-				try {
-					field.set(entry.getValue(), instanceMapping.get(id));
-				} catch (Exception e) {
-					e.printStackTrace();
-					continue;
-				}
-			}
-		}
-	}
-	
-	/**
-	 * 将首字母小写
-	 * @param str
-	 * @return
-	 */
-	private String lowerFirstChar(String str){
-		char [] chars = str.toCharArray();
-		chars[0] += 32;
-		return String.valueOf(chars);
-	}
-
-	public Map<String,Object> getAll(){
-		return instanceMapping;
-	}
-
-	public Properties getConfig() {
-		return config;
-	}
-}
-```
-- 
-
-```java 
 public class NDispatcherServlet extends HttpServlet{
     private static final String LOCATION = "npContextConfigLocation";
 
@@ -164,7 +10,8 @@ public class NDispatcherServlet extends HttpServlet{
     /**存储遍历模板目录的(模板名称、模板文件)**/
     private List<ViewResolver> viewResolvers = new ArrayList<>();
 
-    private static final Pattern PATTERN = Pattern.compile("\\#\\(.+?\\)\\#",Pattern.CASE_INSENSITIVE);
+    /** eg.djfdk#name#dfkjsdfk **/
+    private static final Pattern PATTERN = Pattern.compile("#(.+?)#",Pattern.CASE_INSENSITIVE);
     
     /** 初始化IOC容器 **/
     @Override
@@ -178,7 +25,6 @@ public class NDispatcherServlet extends HttpServlet{
         initLocaleResolver(context);
         // 主题View层的
         initThemeResolver(context);
-
         //============== 重要 ================
         // 解析url和Method的关联关系【自定义】
         initHandlerMappings(context);
@@ -189,7 +35,6 @@ public class NDispatcherServlet extends HttpServlet{
         initHandlerExceptionResolvers(context);
         // 视图转发（根据视图名字匹配到具体模板）
         initRequestToViewNameTranslator(context);
-
         // 解析模板中的内容（拿到服务器传过来的数据，生成HTML代码）【自定义】
         initViewResolvers(context);
         initFlashMapManager(context);
@@ -249,12 +94,12 @@ public class NDispatcherServlet extends HttpServlet{
         // 参数类型作为key，参数的索引号作为值
         Map<String, Integer> paramMapping = new HashMap<>();
 
-        //只需取出具体的某个方法
+        // 只需取出具体的某个方法
         for (Handler handler : handlerMapping) {
             // 获取该方法所有参数
             Class<?>[] paramsTypes = handler.method.getParameterTypes();
 
-            /*有顺序，但通过反射，没法拿到参数名字。匹配自定参数列表*/
+            /* 有顺序，但通过反射，没法拿到参数名字。匹配自定参数列表*/
             for (int i = 0; i < paramsTypes.length; i++) {
                 Class<?> type = paramsTypes[i];
 
@@ -328,11 +173,11 @@ public class NDispatcherServlet extends HttpServlet{
         if (handlerMapping.isEmpty()) {
             return null;
         }
-        // eg.
+        // eg./mvc/web/query/h.htm
         String url = req.getRequestURI();
-        // eg.
+        // eg./mvc
         String contextPath = req.getContextPath();
-        // 解析成相对路径
+        // 解析成相对路径：/web/query/h.htm
         url = url.replace(contextPath, "").replaceAll("/+", "/");
 
         // 循环handlerMapping
@@ -356,15 +201,16 @@ public class NDispatcherServlet extends HttpServlet{
 
     private void doDispatch(HttpServletRequest req, HttpServletResponse resp) throws Exception{
         try{
-            // 先取出来一个Handler，从HandlerMapping取
+            // 先取出来一个Handler，从HandlerMapping取（控制层&方法&正则表达式）
             Handler handler = getHandler(req);
             if(handler == null){
                 resp.getWriter().write("404 Not Found");
                 return ;
             }
 
-            // 再取出一个适配器，再由适配调用具体方法
+            // 再取出一个适配器，再由适配调用具体方法（参数&对应索引）
             HandlerAdapter ha = getHandlerAdapter(handler);
+            // 获取前端传输值，根据索引号对参数赋值（模板页面&model值）
             NModelAndView mv = ha.handle(req, resp, handler);
 
             /*自定义模板框架
@@ -372,6 +218,7 @@ public class NDispatcherServlet extends HttpServlet{
             Freemark  #
             JSP   ${name}
             自定义 #name#*/
+            // 加载模板页面，动态设置值，渲染页面
             applyDefaultViewName(resp, mv);
         }catch(Exception e){
             throw e;
@@ -392,9 +239,141 @@ public class NDispatcherServlet extends HttpServlet{
             }
             String r = resolver.parse(mv);
             if (r != null) {
+                // eg.Hello, I am jack, I come from hongkong.Nice to meet you!
                 resp.getWriter().write(r);
                 break;
             }
+        }
+    }
+
+    /**
+     * 方法适配器
+     */
+    private class HandlerAdapter{
+        private Map<String, Integer> paramMapping;
+
+        public HandlerAdapter(Map<String, Integer> paramMapping) {
+            this.paramMapping = paramMapping;
+        }
+
+        /**主要目的：用反射调用url对应的method**/
+        public NModelAndView handle(HttpServletRequest req, HttpServletResponse resp, Handler handler)
+                throws Exception {
+            // 为什么要传req、resp、为什么传handler
+            Class<?>[] paramTypes = handler.method.getParameterTypes();
+            // 想给参数赋值，只能通过索引号来找到具体的某个参数
+            Object[] paramValues = new Object[paramTypes.length];
+            Map<String, String[]> params = req.getParameterMap();
+            for (Map.Entry<String, String[]> param : params.entrySet()) {
+                String value = Arrays.toString(param.getValue()).replaceAll("\\[|\\]", "").replaceAll(",\\s", ",");
+                if (!this.paramMapping.containsKey(param.getKey())) {
+                    continue;
+                }
+                int index = this.paramMapping.get(param.getKey());
+                // 单个赋值不行
+                paramValues[index] = castStringValue(value, paramTypes[index]);
+            }
+            // request和response要赋值
+            String reqName = HttpServletRequest.class.getName();
+            if (this.paramMapping.containsKey(reqName)) {
+                int reqIndex = this.paramMapping.get(reqName);
+                paramValues[reqIndex] = req;
+            }
+            String resqName = HttpServletResponse.class.getName();
+            if (this.paramMapping.containsKey(resqName)) {
+                int respIndex = this.paramMapping.get(resqName);
+                paramValues[respIndex] = resp;
+            }
+            boolean isModelAndView = handler.method.getReturnType() == NModelAndView.class;
+            Object r = handler.method.invoke(handler.controller, paramValues);
+            if (isModelAndView) {
+                return (NModelAndView) r;
+            } else {
+                return null;
+            }
+        }
+
+        /**
+         * 只考虑简单的几种类型，同理可推理
+         * @param value
+         * @param clazz
+         * @return
+         */
+        private Object castStringValue(String value, Class<?> clazz) {
+            if (clazz == String.class) {
+                return value;
+            } else if (clazz == Integer.class) {
+                return Integer.valueOf(value);
+            } else if (clazz == int.class) {
+                return Integer.valueOf(value).intValue();
+            } else {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * HandlerMapping 定义
+     */
+    private class Handler{
+        protected Object controller;
+        protected Method method;
+        protected Pattern pattern;
+
+        protected Handler(Pattern pattern,Object controller,Method method){
+            this.pattern = pattern;
+            this.controller = controller;
+            this.method = method;
+        }
+    }
+
+    private class ViewResolver{
+        /**模板名称**/
+        private String viewName;
+        /**模板文件**/
+        private File file;
+
+        protected ViewResolver(String viewName,File file){
+            this.viewName = viewName;
+            this.file = file;
+        }
+
+        protected String parse(NModelAndView mv) throws Exception{
+            StringBuffer sb = new StringBuffer();
+            // 只读文件
+            RandomAccessFile raf = new RandomAccessFile(this.file, "r");
+            try{
+                /*模板框架语法很复杂，但原理相通，都是用正则表达式处理字符串，模板框架语法没有多高大上
+                现在的前后端分离，后端只需暴露json即可，无需渲染数据
+                自创模板语法*/
+                String line = null;
+                while((line = raf.readLine()) != null){
+                    Matcher m = matcher(line);
+                    while (m.find()) {
+                        for (int i = 1; i <= m.groupCount(); i ++) {
+                            String paramName = m.group(i);
+                            Object paramValue = mv.getModel().get(paramName);
+                            if (null == paramValue) {
+                                continue;
+                            }
+                            line = line.replaceAll("\\#" + paramName + "\\#", paramValue.toString());
+                        }
+                    }
+                    sb.append(line);
+                }
+            }finally{
+                raf.close();
+            }
+            return sb.toString();
+        }
+
+        private Matcher matcher(String str){
+            Matcher m = PATTERN.matcher(str);
+            return m;
+        }
+
+        public String getViewName() {
+            return viewName;
         }
     }
 }
