@@ -1,3 +1,4 @@
+
 [toc]
 
 ### 1.spring IOC核心体系结构
@@ -5,7 +6,7 @@
 #### 1.1 BeanFactory
 >Spring Bean的创建是典型的工厂模式，这些Bean工厂（IOC容器）在管理对象间的依赖关系提供了便利和基础服务，Spring中有许多IOC容器的实现，相互关系如下：
 
-![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/DefaultListableBeanFactory.png?raw=true)
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/02/DefaultListableBeanFactory.png?raw=true)
 
 >BeanFactory是最顶层的接口类，定义了IOC容器的基本功能规范。  
 它有三个子类：ListableBeanFactory、HierarchicalBeanFactory和AutowireCapableBeanFactory。  
@@ -64,18 +65,18 @@ XmlBeanFactory实现最基本的IOC容器（可读取XML文件定义的BeanDefin
 #### 1.2 BeanDefinition
 >Spring IOC容器管理各种Bean对象及其相互关系，Bean对象在Spring实现中是以BeanDefinition来描述的，其继承体系如下：
 
-![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/RootBeanDefinition.jpg?raw=true)
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/02/RootBeanDefinition.jpg?raw=true)
 
 >Bean解析过程非常复杂，功能很细。需被扩展的很多，必须保证足够的灵活性。Bean的解析主要是对Spring配置文件的解析。这个解析过程主要通过下图中的类完成：
 
-![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/XmlBeanDefinitionReader.jpg?raw=true)
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/02/XmlBeanDefinitionReader.jpg?raw=true)
 
 ---
 
 ### 2.IOC容器初始化
 >IOC容器的初始化过程包括BeanDefinition的Resource定位、载入和注册。以ApplicationContext为例讲解（web项目中使用的XmlWebApplicationContext、ClasspathXmlApplicationContext等就属于这个继承体系），如下：
 
-![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/ApplicationContext.jpg?raw=true)
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/02/ApplicationContext.jpg?raw=true)
 
 >ApplicationContext允许上下文嵌套，通过保持父上下文可维持一个上下文体系。Bean可在上下文体系中查找：①检查当前上下文；②父上下文，逐级向上（为不同的Spring应用提供共享的Bean环境）。
 
@@ -274,7 +275,7 @@ SpringIOC容器载入Bean定义资源文件从其子类容器的refreshBeanFacto
 
 ##### 2.2.4 AbstractApplicationContext的obtainFreshBeanFactory()
 - AbstractApplicationContext的obtainFreshBeanFactory()方法调用子类容器的refreshBeanFactory()方法，启动容器载入Bean定义资源文件的过程
-```java
+```java 
 //org.springframework.context.support.AbstractApplicationContext
 //protected abstract void refreshBeanFactory() throws BeansException, IllegalStateException;
 protected ConfigurableListableBeanFactory obtainFreshBeanFactory() {
@@ -383,16 +384,16 @@ protected Resource[] getConfigResources() {
 >AbstractBeanDefinitionReader读取Bean定义资源,在其抽象父类AbstractBeanDefinitionReader中定义了载入过程。
 >loadBeanDefinitions方法做了两件事：①调用资源加载器的获取资源方法resourceLoader.getResource(location)，获取加载资源；②真正执行加载功能是其子类XmlBeanDefinitionReader的loadBeanDefinitions方法。
 
->ResourceLoader与ApplicationContext继承系图，可知道其实际调用的是DefaultResourceLoader中的getSource()方法定位Resource，因为FileSystemXmlApplicationContext本身就是DefaultResourceLoader的实现类，故又回到了FileSystemXmlApplicationContext中来。
-```java
+
+```java 
 //org.springframework.beans.factory.support.AbstractBeanDefinitionReader
-//重载方法，调用下面的loadBeanDefinitions(String, Set<Resource>);方法
+//重载方法，调用下面的loadBeanDefinitions(String, Set<Resource>);方法 
 public int loadBeanDefinitions(String location) throws BeanDefinitionStoreException {
 	return loadBeanDefinitions(location, null);
 }
 
 public int loadBeanDefinitions(String location, Set<Resource> actualResources) throws BeanDefinitionStoreException {
-	//获取在IoC容器初始化过程中设置的资源加载器
+	//获取在IoC容器初始化过程中设置的资源加载器 
 	ResourceLoader resourceLoader = getResourceLoader();
 	if (resourceLoader == null) {
 		throw new BeanDefinitionStoreException("Cannot import bean definitions from location [" + location + "]: no ResourceLoader available");
@@ -401,10 +402,10 @@ public int loadBeanDefinitions(String location, Set<Resource> actualResources) t
 	if (resourceLoader instanceof ResourcePatternResolver) {
 		// Resource pattern matching available.
 		try {
-			//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源
-            //加载多个指定位置的Bean定义资源文件
+			//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源  
+            //加载多个指定位置的Bean定义资源文件  
 			Resource[] resources = ((ResourcePatternResolver) resourceLoader).getResources(location);
-			//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能
+			//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能 
 			int loadCount = loadBeanDefinitions(resources);
 			if (actualResources != null) {
 				for (Resource resource : resources) {
@@ -422,7 +423,7 @@ public int loadBeanDefinitions(String location, Set<Resource> actualResources) t
 	}
 	else {
 		// Can only load single resources by absolute URL.
-		//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源
+		//将指定位置的Bean定义资源文件解析为Spring IOC容器封装的资源  
         //加载单个指定位置的Bean定义资源文件
 		Resource resource = resourceLoader.getResource(location);
 		//委派调用其子类XmlBeanDefinitionReader、PropertiesBeanDefinitionReader的方法，实现加载功能
@@ -453,7 +454,7 @@ public int loadBeanDefinitions(String... locations) throws BeanDefinitionStoreEx
 ##### 2.2.7 DefaultResourceLoader的getResource方法
 >资源加载器获取要读入的资源：XmlBeanDefinitionReader调用父类DefaultResourceLoader方法。
 
-```java
+```java 
 //org.springframework.core.io.DefaultResourceLoader
 //获取Resource的具体实现方法
 public Resource getResource(String location) {
@@ -471,7 +472,7 @@ public Resource getResource(String location) {
 		}
 		catch (MalformedURLException ex) {
 			// No URL -> resolve as resource path.
-			//如果既不是classpath标识，又不是URL标识的Resource定位，则调用容器本身的getResourceByPath方法获取Resource
+			//如果既不是classpath标识，又不是URL标识的Resource定位，则调用容器本身的getResourceByPath方法获取Resource 
 			return getResourceByPath(location);
 		}
 	}
@@ -493,7 +494,7 @@ protected Resource getResourceByPath(String path) {
 >XmlBeanDefinitionReader加载Bean定义资源,源码代表bean文件的资源定义以后的载入过程。
 
 
-```java
+```java 
 //org.springframework.beans.factory.xml.XmlBeanDefinitionReader
 //XmlBeanDefinitionReader加载资源的入口方法
 public int loadBeanDefinitions(Resource resource) throws BeanDefinitionStoreException {
@@ -542,7 +543,7 @@ protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
 
 #### 2.2.9 DocumentLoader的loadDocument方法
 >DocumentLoader将Bean定义资源转换成Document对象源码：
-```java
+```java 
 //org.springframework.beans.factory.xml.DocumentLoader定义了接口
 //org.springframework.beans.factory.xml.DefaultDocumentLoader实现了接口，如下
 //使用标准的JAXP将载入的Bean定义资源转换成document对象
@@ -557,7 +558,7 @@ public Document loadDocument(InputSource inputSource, EntityResolver entityResol
 	DocumentBuilder builder = createDocumentBuilder(factory, entityResolver, errorHandler);
 	//解析Spring的Bean定义资源
 	return builder.parse(inputSource);
-}
+}	
 
 //创建文档解析工厂
 protected DocumentBuilderFactory createDocumentBuilderFactory(int validationMode, boolean namespaceAware)
@@ -591,7 +592,7 @@ protected DocumentBuilderFactory createDocumentBuilderFactory(int validationMode
 
 #### 2.2.10 XmlBeanDefinitionReader的registerBeanDefinitions方法
 >XmlBeanDefinitionReader类中的doLoadBeanDefinitions方法是从特定XML文件中实际载入Bean定义资源的方法，该方法在载入Bean定义资源后将其转换为Document对象，接下来调用registerBeanDefinitions启动SpringIOC容器对Bean定义的解析过程。
-```java
+```java 
 //按照Spring的Bean语义要求将Bean定义资源解析并转换为容器内部数据结构
 public int registerBeanDefinitions(Document doc, Resource resource) throws BeanDefinitionStoreException {
 	//得到BeanDefinitionDocumentReader来对xml格式的BeanDefinition解析
@@ -605,8 +606,8 @@ public int registerBeanDefinitions(Document doc, Resource resource) throws BeanD
 	return getRegistry().getBeanDefinitionCount() - countBefore;
 }
 ```
->Bean定义资源的载入解析的两个过程：
-①通过调用XML解析器将Bean定义资源文件转换得到Document对象（没按照Spring的Bean规则解析，载入过程）②完成通用XML解析后，按照Spring的Bean规则对Document对象进行解析。
+>Bean定义资源的载入解析的两个过程：  
+①通过调用XML解析器将Bean定义资源文件转换得到Document对象（没按照Spring的Bean规则解析，载入过程）②完成通用XML解析后，按照Spring的Bean规则对Document对象进行解析。  
 按照Spring的Bean规则对Document对象解析的过程是在接口BeanDefinitionDocumentReader的实现类DefaultBeanDefinitionDocumentReader中实现的。
 
 ---
@@ -649,29 +650,15 @@ http://www.cnblogs.com/wxgblogs/p/6659417.html
 
 #### spring-beans
 
-- 
-
-工厂如何产生对象，需看IOC容器实现（eg.XmlBeanFactory[最基本的IOC容器实现]、ClasspathXmlApplicationContext[高级IOC容器]）
-
-ApplicationContext接口看特点：
+>工厂如何产生对象，需看IOC容器实现（eg.XmlBeanFactory[最基本的IOC容器实现]、ClasspathXmlApplicationContext[高级IOC容器]）
+ApplicationContext接口看特点：  
 ①支持信息源，可国际化（MessageSource接口）；
-②访问资源，（实现ResourcePatternResolver接口）；
-③支持应用事件（实现ApplicationEventPublisher接口）。
-
-BeanDefinition
+②访问资源，（实现ResourcePatternResolver接口）；  
+③支持应用事件（实现ApplicationEventPublisher接口）。   
+BeanDefinition  
 IOC容器管理各种Bean对象和其相互关系，Bean对象在spring实现中以BeanDefinition来描述。
-org.springframework.beans.factory.config.BeanDefinition
-
-
-bean的解析过程非常复杂，功能被分的很细，Bean的解析过程主要是对spring配置文件的解析，主要通过以下完成：
-
-org.springframework.beans.factory.xml.XmlBeanDefinitionReader
-
-Spring源码浅析之BeanDefinition
+org.springframework.beans.factory.config.BeanDefinition  
+bean的解析过程非常复杂，功能被分的很细，Bean的解析过程主要是对spring配置文件的解析，主要通过以下完成：  
+org.springframework.beans.factory.xml.XmlBeanDefinitionReader  
+Spring源码浅析之BeanDefinition  
 https://blog.csdn.net/ljw761123096/article/details/80353202
-
-汽车倒车入库技巧图解  
-https://jingyan.baidu.com/article/3f16e003bc653c2590c1035d.html
-
-
-
