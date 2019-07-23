@@ -83,6 +83,7 @@ XmlBeanFactory实现最基本的IOC容器（可读取XML文件定义的BeanDefin
 #### 2.1 XmlBeanFactory(屌丝IOC)流程  
 
 ```java 
+// org.springframework.beans.factory.xml.XmlBeanFactory 
 public class XmlBeanFactory extends DefaultListableBeanFactory {
     //this传的是factory对象
 	private final XmlBeanDefinitionReader reader = new XmlBeanDefinitionReader(this);
@@ -116,6 +117,7 @@ reader.loadBeanDefinitions(resource);
 
 ##### 2.2.1 高富帅版IOC解剖
 ```java 
+// org.springframework.context.support.FileSystemXmlApplicationContext
 public FileSystemXmlApplicationContext(String... configLocations) throws BeansException {
 	this(configLocations, true, null);
 }
@@ -138,6 +140,7 @@ public FileSystemXmlApplicationContext(String[] configLocations, boolean refresh
 >通过追踪FileSystemXmlApplicationContext的继承体系，发现其父类的父类AbstractApplicationContext中初始化IOC容器所做的主要源码如下：
 
 ```java 
+// org.springframework.context.support.AbstractApplicationContext
 public abstract class AbstractApplicationContext extends DefaultResourceLoader
 		implements ConfigurableApplicationContext, DisposableBean {
 		//静态初始化块，在整个容器创建过程中只执行一次
@@ -167,6 +170,7 @@ public abstract class AbstractApplicationContext extends DefaultResourceLoader
 AbstractApplicationContext构造方法中调用PathMatchingResourcePatternResolver的构造方法创建Spring资源加载器
 
 ```java 
+// org.springframework.core.io.support.PathMatchingResourcePatternResolver
 public PathMatchingResourcePatternResolver(ResourceLoader resourceLoader) {
 	Assert.notNull(resourceLoader, "ResourceLoader must not be null");
 	//设置Spring的资源加载器
@@ -177,6 +181,7 @@ public PathMatchingResourcePatternResolver(ResourceLoader resourceLoader) {
 ——调用其父类AbstractRefreshableConfigApplicationContext的方法对Bean定义资源文件的定位，源码如下：
 
 ```java 
+// org.springframework.context.support.AbstractRefreshableConfigApplicationContext
 //解析Bean定义资源文件的路径，处理多个资源文件字符串数组
 public void setConfigLocations(String[] locations) {
 	if (locations != null) {
@@ -203,6 +208,7 @@ public void setConfigLocations(String[] locations) {
 
 - FileSystemXmlApplicationContext通过调用其父类AbstractApplicationContext的refresh()函数启动整个IOC容器对Bean定义的载入过程：
 ```java 
+// org.springframework.context.support.AbstractApplicationContext
 //容器初始化的过程，读入Bean定义资源，并解析注册
 public void refresh() throws BeansException, IllegalStateException {
 	synchronized (this.startupShutdownMonitor) {
@@ -593,6 +599,7 @@ protected DocumentBuilderFactory createDocumentBuilderFactory(int validationMode
 #### 2.2.10 XmlBeanDefinitionReader的registerBeanDefinitions方法
 >XmlBeanDefinitionReader类中的doLoadBeanDefinitions方法是从特定XML文件中实际载入Bean定义资源的方法，该方法在载入Bean定义资源后将其转换为Document对象，接下来调用registerBeanDefinitions启动SpringIOC容器对Bean定义的解析过程。
 ```java 
+// org.springframework.beans.factory.xml.XmlBeanDefinitionReader
 //按照Spring的Bean语义要求将Bean定义资源解析并转换为容器内部数据结构
 public int registerBeanDefinitions(Document doc, Resource resource) throws BeanDefinitionStoreException {
 	//得到BeanDefinitionDocumentReader来对xml格式的BeanDefinition解析
