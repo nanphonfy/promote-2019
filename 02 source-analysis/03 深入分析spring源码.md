@@ -705,10 +705,13 @@ public static void registerBeanDefinition(
 ```
 >当调用BeanDefinitionReaderUtils向IOC容器注册解析的BeanDefinition时，真正完成注册功能的是DefaultListableBeanFactory。
 
-##### 2.2.17 DefaultListableBeanFactory向IOC容器注册解析后的BeanDefinition  
+##### 2.2.17 DefaultListableBeanFactory向IOC容器注册解析后的BeanDefinition 
+
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/04/SimpleAliasRegistry.png?raw=true)
+
 >DefaultListableBeanFactory中使用一个HashMap的集合对象存放IOC容器中注册解析的BeanDefinition：
 
-```
+```java 
 //向IoC容器注册解析的BeanDefinito
 public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) throws BeanDefinitionStoreException {
 	Assert.hasText(beanName, "Bean name must not be empty");

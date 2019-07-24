@@ -1,3 +1,5 @@
+[toc]
+
 ### 1 基于XML的依赖注入
 #### 1.1 依赖注入发生的时间
 >当SpringIOC容器完成Bean定义资源的定位、载入和解析注册后，IOC容器已经管理类Bean定义的相关数据，此时IOC容器还没对所管理的Bean进行依赖注入，依赖注入在以下两种情况发生：  
@@ -5,7 +7,7 @@
 >- (2).当用户在Bean定义资源中为<bean>元素配置了lazy-init属性，即让容器在解析注册Bean定义时进行预实例化，触发依赖注入。  
 BeanFactory接口定义了SpringIOC容器的基本功能规范，是SpringIOC容器所应遵守的最底层和最基本的编程规范。BeanFactory接口中定义了几个getBean方法，就是用户向IOC容器索取管理Bean的方法，分析其子类具体实现，理解IOC容器在用户索取Bean时如何完成依赖注入。
 
-...
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/source-analysis/04/SimpleAliasRegistry.png?raw=true)
 
 >在BeanFactory中我们看到getBean（String...）函数，它的具体实现在AbstractBeanFactory中
 
