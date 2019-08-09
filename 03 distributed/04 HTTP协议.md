@@ -91,6 +91,9 @@ DELETE：（删除）。
 造加密通道。
 
 ###### 实现原理
+
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/distributed/04/HTTPS.png)
+
 - 1 客户端发起请求
 >a) 三次握手，建立TCP连接;  
 b) 支持的协议版本(TLS/SSL);  
