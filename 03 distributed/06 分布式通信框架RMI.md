@@ -10,10 +10,13 @@
 stub：client的代理，用于server通信；  
 skeleton：server的代理，用于接收client请求后调用远程方法响应客户端的请求。
 
-#### 发布远程对象
+#### Java RMI源码分析
+##### 源码结构图  
+...
+
+##### 远程对象发布
 >如上，此处会发布两个远程对象：①RegistryImpl；②UserServiceImpl；  
 UserServiceImpl的构造函数调用父类UnicastRemoteObject的构造方法，追溯到UnicastRemoteObject的私有方法exportObject()。 
-
 ```java 
 // cn.nanphonfy.mi.server.UserServiceImpl
 public class UserServiceImpl extends UnicastRemoteObject implements UserService{
@@ -27,6 +30,7 @@ public class UserServiceImpl extends UnicastRemoteObject implements UserService{
     }
 }
 
+// cn.nanphonfy.mi.server.Server
 public static final String BINDING_ADDRESS = "rmi://127.0.0.1/sayWord";
 public static void main(String[] args) {
     try {
@@ -214,3 +218,88 @@ public void exportObject(Target var1) throws RemoteException {
 >【连接层】追溯LiveRef的exportObject()->TCPTransport的exportObject()——将上面构造的Target对象暴露出去。调用TCPTransport的listen()方法——创建一个ServerSocket，启动一条线程等待客户端的请求。  
 调用父类Transport的exportObject()将Target对象存放进ObjectTable。  
 到这，已将RegistryImpl对象创建且起了服务等待客户端请求。
+
+
+##### 客户端获取服务端Registry代理
+
+```java 
+// cn.nanphonfy.mi.client.Client
+UserService userService = (UserService) Naming.lookup(Server.BINDING_ADDRESS);
+```
+>追溯到LocateRegistry的getRegistry()——通过传入的host、port构造RemoteRef对象，并创建一个本地代理(RegistryImpl_Stub对象)。  
+客户端有了RegistryImpl的代理，此时该代理还没
+和服务端关联（两个VM对象），代理和远程的Registry对象间通过socket完成。
+
+```java 
+// java.rmi.Naming
+public static Remote lookup(String name)
+    throws NotBoundException,
+        java.net.MalformedURLException,
+        RemoteException{
+    ParsedNamingURL parsed = parseURL(name);
+    Registry registry = getRegistry(parsed);
+
+    if (parsed.name == null)
+        return registry;
+    return registry.lookup(parsed.name);
+}
+
+// java.rmi.registry.LocateRegistry
+public static Registry getRegistry(String host, int port,RMIClientSocketFactory csf) throws RemoteException{
+    Registry registry = null;
+    // 获取仓库地址
+    if (port <= 0)
+        port = Registry.REGISTRY_PORT;
+
+    if (host == null || host.length() == 0){
+        // If host is blank (as returned by "file:" URL in 1.0.2 used in
+        // java.rmi.Naming), try to convert to real local host name so
+        // that the RegistryImpl's checkAccess will not fail.
+        try {
+            host = java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            // If that failed, at least try "" (localhost) anyway...
+            host = "";
+        }
+    }
+    // 与TCP通信的类
+    LiveRef liveRef = new LiveRef(new ObjID(ObjID.REGISTRY_ID),new TCPEndpoint(host, port, csf, null),false);
+    RemoteRef ref = (csf == null) ? new UnicastRef(liveRef) : new UnicastRef2(liveRef);
+
+    // 创建远程代理类，赋引用liveref，动态代理时能TCP通信
+    return (Registry) Util.createProxy(RegistryImpl.class, ref, false);
+}
+```
+>调用RegistryImpl_Stub的ref（RemoteRef）对象的newCall()方法，将RegistryImpl_Stub对象传进去， 把服务器相关的信息也传进newCall()——建立跟远程RegistryImpl的Skeleton对象的连接。（服务端通过 CPTransport 的exportObject()
+等待客户端请求）
+
+
+```java  
+// sun.rmi.server.UnicastRef
+public RemoteCall newCall(RemoteObject var1, Operation[] var2, int var3, long var4) throws RemoteException {
+    clientRefLog.log(Log.BRIEF, "get connection");
+    Connection var6 = this.ref.getChannel().newConnection();
+
+    try {
+        clientRefLog.log(Log.VERBOSE, "create call context");
+        if(clientCallLog.isLoggable(Log.VERBOSE)) {
+            this.logClientCall(var1, var2[var3]);
+        }
+
+        StreamRemoteCall var7 = new StreamRemoteCall(var6, this.ref.getObjID(), var3, var4);
+
+        try {
+            this.marshalCustomCallData(var7.getOutputStream());
+        } catch (IOException var9) {
+            throw new MarshalException("error marshaling custom call data");
+        }
+
+        return var7;
+    } catch (RemoteException var10) {
+        this.ref.getChannel().free(var6, false);
+        throw var10;
+    }
+}
+```
+>连接建立后，发送请求。客户端拥有Registry对象的代理，不是真正位于服务端的Registry对象本身，他们位于不同的虚拟机中，无法直接调用，通过消息进行交互。super.ref.invoke() ——追溯到
+StreamRemoteCall的executeCall()方法。看似本地调用，但是通过tcp连接发送消息到服务端。由服务端解析并且处理调用。
