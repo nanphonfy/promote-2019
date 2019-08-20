@@ -302,4 +302,234 @@ public RemoteCall newCall(RemoteObject var1, Operation[] var2, int var3, long va
 }
 ```
 >连接建立后，发送请求。客户端拥有Registry对象的代理，不是真正位于服务端的Registry对象本身，他们位于不同的虚拟机中，无法直接调用，通过消息进行交互。super.ref.invoke() ——追溯到
-StreamRemoteCall的executeCall()方法。看似本地调用，但是通过tcp连接发送消息到服务端。由服务端解析并且处理调用。
+StreamRemoteCall的executeCall()方法。看似本地调用，但是通过tcp连接发送消息到服务端。由服务端解析并且处理调用。   
+>至此，已将客户端的请求发出。
+
+```java 
+// sun.rmi.server.UnicastRef
+public void invoke(RemoteCall var1) throws Exception {
+    try {
+        clientRefLog.log(Log.VERBOSE, "execute call");
+        var1.executeCall();
+    } catch (RemoteException var3) {
+        clientRefLog.log(Log.BRIEF, "exception: ", var3);
+        this.free(var1, false);
+        throw var3;
+    } catch (Error var4) {
+        clientRefLog.log(Log.BRIEF, "error: ", var4);
+        this.free(var1, false);
+        throw var4;
+    } catch (RuntimeException var5) {
+        clientRefLog.log(Log.BRIEF, "exception: ", var5);
+        this.free(var1, false);
+        throw var5;
+    } catch (Exception var6) {
+        clientRefLog.log(Log.BRIEF, "exception: ", var6);
+        this.free(var1, true);
+        throw var6;
+    }
+}
+
+// sun.rmi.server.UnicastServerRef
+public Remote exportObject(Remote var1, Object var2, boolean var3) throws RemoteException {
+    Class var4 = var1.getClass();
+
+    Remote var5;
+    try {
+        var5 = Util.createProxy(var4, this.getClientRef(), this.forceStubUse);
+    } catch (IllegalArgumentException var7) {
+        throw new ExportException("remote object implements illegal remote interface", var7);
+    }
+
+    if(var5 instanceof RemoteStub) {
+        this.setSkeleton(var1);
+    }
+
+    Target var6 = new Target(var1, this, var5, this.ref.getObjID(), var3);
+    // protected LiveRef ref;
+    this.ref.exportObject(var6);
+    this.hashToMethod_Map = (Map)hashToMethod_Maps.get(var4);
+    return var5;
+}
+
+// sun.rmi.transport.LiveRef
+public void exportObject(Target var1) throws RemoteException {
+    // private final Endpoint ep;
+    this.ep.exportObject(var1);
+}
+
+// sun.rmi.transport.tcp.TCPEndpoint
+public void exportObject(Target var1) throws RemoteException {
+    // private TCPTransport transport;
+    this.transport.exportObject(var1);
+}
+
+// sun.rmi.transport.tcp.TCPTransport
+public void exportObject(Target var1) throws RemoteException {
+    synchronized(this) {
+        this.listen();
+        ++this.exportCount;
+    }
+
+    boolean var2 = false;
+    boolean var12 = false;
+
+    try {
+        var12 = true;
+        super.exportObject(var1);
+        ......
+
+}
+```
+>TCP协议层发起socket监听，多线程循环接收请
+求：TCPTransport.AcceptLoop(this.server)
+
+```java 
+// sun.rmi.transport.tcp.TCPTransport
+private void listen() throws RemoteException {
+    assert Thread.holdsLock(this);
+
+    TCPEndpoint var1 = this.getEndpoint();
+    int var2 = var1.getPort();
+    if(this.server == null) {
+        if(tcpLog.isLoggable(Log.BRIEF)) {
+            tcpLog.log(Log.BRIEF, "(port " + var2 + ") create server socket");
+        }
+        try {
+            this.server = var1.newServerSocket();
+            // sun.rmi.transport.tcp.TCPTransport
+            Thread var3 = (Thread)AccessController.doPrivileged(new NewThreadAction(new TCPTransport.AcceptLoop(this.server), "TCP Accept-" + var2, true));
+            var3.start();
+        } catch (BindException var4) {
+            throw new ExportException("Port already in use: " + var2, var4);
+        } catch (IOException var5) {
+            throw new ExportException("Listen failed on port: " + var2, var5);
+        }
+    } else {
+        SecurityManager var6 = System.getSecurityManager();
+        if(var6 != null) {
+            var6.checkListen(var2);
+        }
+    }
+}
+
+// sun.rmi.transport.tcp.TCPTransport
+private class AcceptLoop implements Runnable {
+    private final ServerSocket serverSocket;
+    private long lastExceptionTime = 0L;
+    private int recentExceptionCount;
+
+    AcceptLoop(ServerSocket var2) {
+        this.serverSocket = var2;
+    }
+
+    public void run() {
+        try {
+            this.executeAcceptLoop();
+        } finally {
+            try {
+                this.serverSocket.close();
+            } catch (IOException var7) {
+                ;
+            }
+        }
+    }
+    ......
+    
+    
+private void executeAcceptLoop() {
+    if(TCPTransport.tcpLog.isLoggable(Log.BRIEF)) {
+        TCPTransport.tcpLog.log(Log.BRIEF, "listening on port " + TCPTransport.this.getEndpoint().getPort());
+    }
+
+    while(true) {
+        Socket var1 = null;
+
+        try {
+            var1 = this.serverSocket.accept();
+            InetAddress var16 = var1.getInetAddress();
+            String var3 = var16 != null?var16.getHostAddress():"0.0.0.0";
+
+            try {
+                TCPTransport.connectionThreadPool.execute(TCPTransport.this.new ConnectionHandler(var1, var3));
+            } catch 
+            ......
+            
+// sun.rmi.transport.tcp.TCPTransport.ConnectionHandler
+private class ConnectionHandler implements Runnable {
+    ......
+    public void run() {
+        Thread var1 = Thread.currentThread();
+        String var2 = var1.getName();
+
+        try {
+            var1.setName("RMI TCP Connection(" + TCPTransport.connectionCount.incrementAndGet() + ")-" + this.remoteHost);
+            AccessController.doPrivileged(() -> {
+                this.run0();
+                return null;
+            }, TCPTransport.NOPERMS_ACC);
+        } finally {
+            var1.setName(var2);
+        }
+
+    }
+    ......
+```
+>run0方法对不同协议做处理。最终调用:TCPTransport.this.handleMessages(var14, true);
+
+```java 
+// sun.rmi.transport.tcp.TCPTransport
+// var15 = this.socket.getInputStream()
+......
+switch(var15) {
+case 75:
+    var10.writeByte(78);
+    if(TCPTransport.tcpLog.isLoggable(Log.VERBOSE)) {
+        TCPTransport.tcpLog.log(Log.VERBOSE, "(port " + var2 + ") " + "suggesting " + this.remoteHost + ":" + var11);
+    }
+
+    var10.writeUTF(this.remoteHost);
+    var10.writeInt(var11);
+    var10.flush();
+    String var16 = var5.readUTF();
+    int var17 = var5.readInt();
+    if(TCPTransport.tcpLog.isLoggable(Log.VERBOSE)) {
+        TCPTransport.tcpLog.log(Log.VERBOSE, "(port " + var2 + ") client using " + var16 + ":" + var17);
+    }
+
+    var12 = new TCPEndpoint(this.remoteHost, this.socket.getLocalPort(), var1.getClientSocketFactory(), var1.getServerSocketFactory());
+    var13 = new TCPChannel(TCPTransport.this, var12);
+    var14 = new TCPConnection(var13, this.socket, (InputStream)var4, var9);
+    TCPTransport.this.handleMessages(var14, true);
+    return;
+......  
+
+void handleMessages(Connection var1, boolean var2) {
+    int var3 = this.getEndpoint().getPort();
+
+    try {
+        DataInputStream var4 = new DataInputStream(var1.getInputStream());
+
+        do {
+            int var5 = var4.read();
+            if(var5 == -1) {
+                if(tcpLog.isLoggable(Log.BRIEF)) {
+                    tcpLog.log(Log.BRIEF, "(port " + var3 + ") connection closed");
+                }
+                break;
+            }
+
+            if(tcpLog.isLoggable(Log.BRIEF)) {
+                tcpLog.log(Log.BRIEF, "(port " + var3 + ") op = " + var5);
+            }
+
+            switch(var5) {
+            case 80:
+                StreamRemoteCall var6 = new StreamRemoteCall(var1);
+                if(!this.serviceCall(var6)) {
+                    return;
+                }
+                break;
+    ......
+```
+>这个地方也做了判断，若不知道怎么走，在这里加断点，会走到 case 80的段落，执行serviceCall()。
