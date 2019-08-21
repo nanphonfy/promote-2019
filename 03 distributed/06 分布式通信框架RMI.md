@@ -12,7 +12,9 @@ skeleton：server的代理，用于接收client请求后调用远程方法响应
 
 #### Java RMI源码分析
 ##### 源码结构图  
-...
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/distributed/06/UnicastRemoteObject.png)
+
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/distributed/06/UnicastServerRef.png)
 
 ##### 远程对象发布
 >如上，此处会发布两个远程对象：①RegistryImpl；②UserServiceImpl；  
@@ -533,3 +535,87 @@ void handleMessages(Connection var1, boolean var2) {
     ......
 ```
 >这个地方也做了判断，若不知道怎么走，在这里加断点，会走到 case 80的段落，执行serviceCall()。
+
+>Transport的serviceCall(关键方法)。到ObjectTable.getTarget()为止：从socket流获取ObjId，通过ObjId和Transport对象获取Target对象（已是服务端对象），再借由Target的派发器Dispatcher，传入参数服务实现和请求对象RemoteCall，将请求派发给服务端真正提供服务的RegistryImpl的lookUp()方法，即Skeleton（负责底层操作）移交给具体实现的过程。
+
+```java 
+// sun.rmi.transport.Transport
+public boolean serviceCall(final RemoteCall var1) {
+try {
+    ObjID var39;
+    try {
+        var39 = ObjID.read(var1.getInputStream());
+    } catch (IOException var33) {
+        throw new MarshalException("unable to read objID", var33);
+    }
+
+    Transport var40 = var39.equals(dgcID)?null:this;
+    // 此处的Target为服务端对象
+    Target var5 = ObjectTable.getTarget(new ObjectEndpoint(var39, var40));
+    final Remote var37;
+    if(var5 != null && (var37 = var5.getImpl()) != null) {
+        final Dispatcher var6 = var5.getDispatcher();
+        var5.incrementCallCount();
+
+        boolean var8;
+        try {
+            transportLog.log(Log.VERBOSE, "call dispatcher");
+            final AccessControlContext var7 = var5.getAccessControlContext();
+            ClassLoader var41 = var5.getContextClassLoader();
+            ClassLoader var9 = Thread.currentThread().getContextClassLoader();
+
+            try {
+                setContextClassLoader(var41);
+                currentTransport.set(this);
+
+                try {
+                    AccessController.doPrivileged(new PrivilegedExceptionAction() {
+                        public Void run() throws IOException {
+                            Transport.this.checkAcceptPermission(var7);
+                            var6.dispatch(var37, var1);
+                            return null;
+                        }
+                    }, var7);
+                    return true;
+                } catch (PrivilegedActionException var31) {
+                    throw (IOException)var31.getException();
+                }
+            } finally {
+                setContextClassLoader(var9);
+                currentTransport.set((Object)null);
+            }
+        } catch (IOException var34) {
+        ......
+
+```
+>客户端通过如下：①创建一个RegistryImpl_Stub的代理类；②通过代理类socket请求，将lookup发送到服务端；③服务端接收请求后，通过RegistryImpl_Stub（Skeleton）执行RegistryImpl的lookUp。
+>>服务端的RegistryImpl返回：服务端的UserServiceImpl实现类。
+```java
+// cn.nanphonfy.mi.client.Client
+UserService userService = (UserService) Naming.lookup(Server.BINDING_ADDRESS);
+
+// sun.rmi.registry.RegistryImpl
+public Remote lookup(String var1) throws RemoteException, NotBoundException {
+    Hashtable var2 = this.bindings;
+    synchronized(this.bindings) {
+        Remote var3 = (Remote)this.bindings.get(var1);
+        if(var3 == null) {
+            throw new NotBoundException(var1);
+        } else {
+            return var3;
+        }
+    }
+}
+```
+>客户端通过lookUp查询获得的客户端HelloServiceImpl的Stub对象（Skeleton屏蔽了，故为透明）。后续的处理：通过UserServiceImpl_Stub代理对象socket网络请求服务端，通过服务端的HelloServiceImpl_Stub(Skeleton) 代理，将请求通过Dispatcher 转发到对应的服务端方法，获得结果后再通过 socket把结果返回客户端。
+
+#### RMI做了啥
+>有两个代理类：①RegistryImpl的代理类；②HelloServiceImpl的代理类。
+
+- 时序图
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/distributed/06/RMI.png)
+
+- RMI基本原理
+>Client的RMI调用前，必须通过LocateRegistry或Naming方式到RMI注册表寻找要调用的RMI注册信息。找到后，Client从RMI注册表获取该RMI Remote Service的Stub信息。然后才能正式调用。  
+正式调用的过程不是由RMI Client直接访问Remote Service，而是由客户端获取Stub作为RMI Client 的代理访问Remote Service的代理Skeleton。即真实的请求调用在Stub-Skeleton间进行。  
+Registry不参与具体的Stub-Skeleton的调用过程，只负责记录"哪个服务名"使用哪个Stub，并在 Remote Client询问它时将该Stub返回（无则报错）。
