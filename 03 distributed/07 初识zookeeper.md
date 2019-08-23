@@ -50,3 +50,6 @@ D：若集群Leader挂了，需一个端口重新选举新Leader。该端口用�
 伪集群：B都一样，故不同Zookeeper实例通信端口号不能一样，需分配不同的端口号。  
 集群模式，集群中每台机器都需感知到整个集群是
 由哪几台机器组成，在配置文件中，按格式server.id=host:port:port，每一行代表一个机器配置。id:指的是serverID,用来标识该机器在集群中的机器序号。  
+>- ②新建datadir目录：设置每台zookeeper的myid，都需在dataDir下创建一个myid文件，该文件只有一行内容，对应每台机器的Server ID，eg.server.1的myid为1。     确保每个服务器myid文件的数字不同， 且和所在机器的zoo.cfg中server.id的id值一致，范围是1~255。
+>- ③启动zookeeper：Observer角色：在不影响写性能的情况下扩展zookeeper，本身zookeeper集群性能已很好，但若超大量客户端访问，必须增加数量，而随着服务器增加，zookeeper集群的写性能就会下降；  
+zookeeper的znode变更需半数及以上服务器投票通过，而随着机器的增加，由于网络消耗等原因必导致投票成本增加，性能下降。
