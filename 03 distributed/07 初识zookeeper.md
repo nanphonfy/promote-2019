@@ -239,6 +239,7 @@ ClientCnxn中WatchRegistration也会被封装到Pakcet中，由SendThread线程�
 - SendThread发送过程
 >初始化连接时，zookeeper初始化并启动了两线程。分析SendThread发送过程：
 ```java 
+// org.apache.zookeeper.ClientCnxn.SendThread+
 public void run() {
     this.clientCnxnSocket.introduce(this, ClientCnxn.this.sessionId);
     this.clientCnxnSocket.updateNow();
@@ -377,6 +378,7 @@ clientCnxnSocket默认使用ClientCnxnSocketNIO（在实例化zookeeper时）
 ```java 
 // org.apache.zookeeper.ClientCnxnSocketNIO
 void doTransport(int waitTimeOut, List<Packet> pendingQueue, LinkedList<Packet> outgoingQueue, ClientCnxn cnxn) throws IOException, InterruptedException {
+    // java.nio.channels.Selector
     this.selector.select((long)waitTimeOut);
     Set selected;
     synchronized(this) {
@@ -389,19 +391,24 @@ void doTransport(int waitTimeOut, List<Packet> pendingQueue, LinkedList<Packet> 
     while(i$.hasNext()) {
         SelectionKey k = (SelectionKey)i$.next();
         SocketChannel sc = (SocketChannel)k.channel();
-        if((k.readyOps() & 8) != 0) {
+        // 若之前没立马连上，则处理OP_CONNECT事件
+        if ((k.readyOps() & SelectionKey.OP_CONNECT) != 0) {
             if(sc.finishConnect()) {
                 this.updateLastSendAndHeard();
                 this.sendThread.primeConnection();
             }
-        } else if((k.readyOps() & 5) != 0) {
+        } 
+        // 若读写就位，则处理
+        else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
             this.doIO(pendingQueue, outgoingQueue, cnxn);
         }
     }
 
     if(this.sendThread.getZkState().isConnected()) {
         synchronized(outgoingQueue) {
+            // 找到连接Packet并将其放到队列头
             if(this.findSendablePacket(outgoingQueue, cnxn.sendThread.clientTunneledAuthenticationInProgress()) != null) {
+                // 将Channecl设置为可读
                 this.enableWrite();
             }
         }
@@ -409,4 +416,156 @@ void doTransport(int waitTimeOut, List<Packet> pendingQueue, LinkedList<Packet> 
 
     selected.clear();
 }
+
+private Packet findSendablePacket(LinkedList<Packet> outgoingQueue,boolean clientTunneledAuthenticationInProgress) {
+    synchronized (outgoingQueue) {
+        ...
+        // 因为Conn Packet需发送到SASL authentication进行处理，其他Packet都需等待直到该处理完成。Conn Packet必须第一个处理，故找出并放到OutgoingQueue头
+        ListIterator<Packet> iter = outgoingQueue.listIterator();
+        while (iter.hasNext()) {
+            Packet p = iter.next();
+            if (p.requestHeader == null) {
+                iter.remove();  
+                outgoingQueue.add(0, p); 
+                // 将连接放到outgogingQueue第一个元素
+                return p;
+            } else {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("deferring non-priming packet: " + p +
+                            "until SASL authentication completes.");
+                }
+            }
+        }
+        // no sendable packet found.
+        return null;
+    }
+}
+
+// 最重要的IO部分：需处理两类网络事件（读、写）
+void doIO(List<Packet> pendingQueue, LinkedList<Packet> outgoingQueue, ClientCnxn cnxn) throws InterruptedException, IOException {
+    SocketChannel sock = (SocketChannel)this.sockKey.channel();
+    if(sock == null) {
+        throw new IOException("Socket is null!");
+    } else {
+        if(this.sockKey.isReadable()) {
+            // 先从Channel读4个字节，代表头  
+            int rc = sock.read(this.incomingBuffer);
+            if(rc < 0) {
+                throw new EndOfStreamException("Unable to read additional data from server sessionid 0x" + Long.toHexString(this.sessionId) + ", likely server has closed socket");
+            }
+
+            if(!this.incomingBuffer.hasRemaining()) {
+                this.incomingBuffer.flip();
+                if(this.incomingBuffer == this.lenBuffer) {
+                    ++this.recvCount;
+                    this.readLength();
+                } 
+                // 初始化
+                else if(!this.initialized) {
+                    // 读取连接结果
+                    this.readConnectResult();
+                    // Channel可读
+                    this.enableRead();
+                    if(this.findSendablePacket(outgoingQueue, cnxn.sendThread.clientTunneledAuthenticationInProgress()) != null) {
+                        this.enableWrite();
+                    }
+
+                    this.lenBuffer.clear();
+                    this.incomingBuffer = this.lenBuffer;
+                    this.updateLastHeard();
+                    this.initialized = true;
+                } else {
+                    // 处理其他请求
+                    this.sendThread.readResponse(this.incomingBuffer);
+                    this.lenBuffer.clear();
+                    this.incomingBuffer = this.lenBuffer;
+                    this.updateLastHeard();
+                }
+            }
+        }
+
+        if(this.sockKey.isWritable()) {
+            synchronized(outgoingQueue) {
+                // 获得packet
+                Packet p = this.findSendablePacket(outgoingQueue, cnxn.sendThread.clientTunneledAuthenticationInProgress());
+                if(p != null) {
+                    this.updateLastSend();
+                    if(p.bb == null) {
+                    // 若不是连接事件、ping 事件、认证时间 
+                    if((p.requestHeader != null) &&      (p.requestHeader.getType() != OpCode.ping) &&     (p.requestHeader.getType() != OpCode.auth)) {    p.requestHeader.setXid(cnxn.getXid());
+                        }
+                        // 序列化
+                        p.createBB();
+                    }
+                    // 将数据写入Channel
+                    sock.write(p.bb);
+                    // p.bb中若无内容则发送成功
+                    if(!p.bb.hasRemaining()) {
+                        // 发送数+1
+                        ++this.sentCount;
+                      // 将p从队列移除 outgoingQueue.removeFirstOccurrence(p);
+                      // 若该事件不是连接事件、ping事件、认证事件， 则加入pending队列
+                        if(p.requestHeader != null && p.requestHeader.getType() != 11 && p.requestHeader.getType() != 100) {
+                            synchronized(pendingQueue) {
+                                pendingQueue.add(p);
+                            }
+                        }
+                    }
+                }
+
+                if(outgoingQueue.isEmpty()) {
+                    this.disableWrite();
+                } else if(!this.initialized && p != null && !p.bb.hasRemaining()) {
+                    this.disableWrite();
+                } else {
+                    this.enableWrite();
+                }
+            }
+        }
+    }
+}
 ```
+
+- createBB()
+```java 
+// org.apache.zookeeper.ClientCnxn
+public void createBB() {
+    try {
+        ByteArrayOutputStream e = new ByteArrayOutputStream();
+        BinaryOutputArchive boa = BinaryOutputArchive.getArchive(e);
+        boa.writeInt(-1, "len");
+        // 若不是连接事件则设置协议头
+        if(this.requestHeader != null) {
+            this.requestHeader.serialize(boa, "header");
+        }
+
+        // 设置协议体
+        if(this.request instanceof ConnectRequest) {
+            this.request.serialize(boa, "connect");
+            boa.writeBool(this.readOnly, "readOnly");
+        } else if(this.request != null) {
+            this.request.serialize(boa, "request");
+        }
+
+        e.close();
+        // 生成ByteBuffer
+        this.bb = ByteBuffer.wrap(e.toByteArray());
+        // 将bytebuffer的前4个字节修改成真正的长度，总长度减去一个int的长度头 
+        this.bb.putInt(this.bb.capacity() - 4);
+        // 准备后续读，让buffer position = 0
+        this.bb.rewind();
+    } catch (IOException var3) {
+        ClientCnxn.LOG.warn("Ignoring unexpected exception", var3);
+    }
+}
+```
+
+>还有一个比较关键的函数：readResponse函数，用来消费PendingQueue，处理消息分三类：  
+ ping 消息 XID=-2；  
+ auth认证消息 XID=-4 ；  
+ 订阅的消息，即各种变化的通知，eg.子节点变化、节点内容变化，由服务器推过来的消息，获取到这类消息或通过eventThread.queueEvent将消息推入事件队列 。
+
+
+
+https://blog.csdn.net/cnh294141800/article/details/53039482
+
