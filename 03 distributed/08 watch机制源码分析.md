@@ -344,10 +344,326 @@ case OpCode.exists: {
         throw new KeeperException.BadArgumentsException();
     }
     //【很关键的代码】判断请求的getWatch是否存在，若存在，则传递cnxn（servercnxn）
-    // 对于exists请求，需监听data变化事件，添加watcher
+    // 对于exists请求，需监听data变化事件，添加watcher【statNode】
     Stat stat = zks.getZKDatabase().statNode(path, existsRequest.getWatch() ? cnxn : null);
     // 在服务端内存数据库中根据路径得到结果进行组装，设置为ExistsResponse
     rsp = new ExistsResponse(stat);
     break;
+}
+```
+- statNode
+
+```java 
+// org.apache.zookeeper.server.ZKDatabase
+public Stat statNode(String path, ServerCnxn serverCnxn) throws KeeperException.NoNodeException {
+    // org.apache.zookeeper.server.DataTree
+    // protected DataTree dataTree;
+    return dataTree.statNode(path, serverCnxn);
+}
+
+// org.apache.zookeeper.server.DataTree
+public Stat statNode(String path, Watcher watcher) throws KeeperException.NoNodeException {
+    Stat stat = new Stat();
+    // 获得节点数据
+    DataNode n = nodes.get(path);
+    // 若watcher不为空，则将当前watcher和path进行绑定
+    if (watcher != null) {
+        // private final WatchManager dataWatches = new WatchManager();【addWatch】
+        dataWatches.addWatch(path, watcher);
+    }
+    if (n == null) {
+        throw new KeeperException.NoNodeException();
+    }
+    synchronized (n) {
+        n.copyStat(stat);
+        return stat;
+    }
+}
+```
+- addWatch
+```java 
+// org.apache.zookeeper.server.WatchManager
+public synchronized void addWatch(String path, Watcher watcher) {
+    // private final HashMap<String, HashSet<Watcher>> watchTable = new HashMap<String,HashSet<Watcher>>();
+    HashSet<Watcher> list = watchTable.get(path);
+    // 判断watcherTable中是否存在当前路径对应的watcher
+    if (list == null) {
+        // don't waste memory if there are few watches on a node, rehash when the 4th entry is added, doubling size thereafter seems like a good compromise
+        list = new HashSet<Watcher>(4);
+        watchTable.put(path, list);
+    }
+    list.add(watcher);
+
+    // private final HashMap<Watcher, HashSet<String>> watch2Paths = new HashMap<Watcher, HashSet<String>>();
+    HashSet<String> paths = watch2Paths.get(watcher);
+    if (paths == null) {
+        // cnxns typically have many watches, so use default cap here
+        paths = new HashSet<String>();
+         // 设置watcher到节点路径的映射
+        watch2Paths.put(watcher, paths);
+    }
+    // 将路径添加至paths集合
+    paths.add(path);
+}
+```
+>大致流程：  
+①通过传入的path（节点路径）从watchTable获取相应的watcher集合，进入②；  
+②判断①中的watcher是否为空，若为空则进入③，否则进入④；  
+③新生成watcher集合，并将路径path和此集合添加至watchTable中，进入④；  
+④将传入的watcher添加至watcher集合，即完成了path和watcher添加至watchTable的步骤，进入⑤；  
+⑤通过传入的watcher从watch2Paths中获取相应的path集合，进入⑥；  
+⑥判断path集合是否为空，若为空则进入⑦，否则进入⑧；  
+⑦新生成path集合，并将watcher和paths添加至watch2Paths中，进入⑧；  
+⑧将传入的path（节点路径）添加至path集合，即完成了path和watcher添加至watch2Paths的步骤。
+
+- 调用链关系图
+
+
+### 客户端接收服务端处理完成的响应
+>ClientCnxnSocketNIO.doIO服务端处理完后，通过NettyServerCnxn.sendResponse（org.apache.zookeeper.server.NettyServerCnxn）发送返回的响应信息，客户端会在ClientCnxnSocketNIO.doIO接收服务端的返回。
+
+```java 
+// org.apache.zookeeper.ClientCnxnSocketNIO
+void doIO(List<Packet> pendingQueue, LinkedList<Packet> outgoingQueue, ClientCnxn cnxn) throws InterruptedException, IOException {
+    SocketChannel sock = (SocketChannel) sockKey.channel();
+    if (sock == null) {
+        throw new IOException("Socket is null!");
+    }
+    if (sockKey.isReadable()) {
+        int rc = sock.read(incomingBuffer);
+        if (rc < 0) {
+            throw new EndOfStreamException("Unable to read additional data from server sessionid 0x" + Long.toHexString(sessionId) + ", likely server has closed socket");
+        }
+        if (!incomingBuffer.hasRemaining()) {
+            incomingBuffer.flip();
+            if (incomingBuffer == lenBuffer) {
+                recvCount++;
+                readLength();
+            } else if (!initialized) {
+                readConnectResult();
+                enableRead();
+                if (findSendablePacket(outgoingQueue, cnxn.sendThread.clientTunneledAuthenticationInProgress()) != null) {
+                    enableWrite();
+                }
+                lenBuffer.clear();
+                incomingBuffer = lenBuffer;
+                updateLastHeard();
+                initialized = true;
+            } else {
+                //【收到消息后触发SendThread.readResponse方法】
+                sendThread.readResponse(incomingBuffer);
+                // protected final ByteBuffer lenBuffer = ByteBuffer.allocateDirect(4);
+                // protected ByteBuffer incomingBuffer = lenBuffer;
+                lenBuffer.clear();
+                incomingBuffer = lenBuffer;
+                updateLastHeard();
+            }
+        }
+    }
+    if (sockKey.isWritable()) {
+        synchronized(outgoingQueue) {
+            Packet p = findSendablePacket(outgoingQueue,cnxn.sendThread.clientTunneledAuthenticationInProgress());
+
+            if (p != null) {
+                updateLastSend();
+                // If we already started writing p, p.bb will already exist
+                if (p.bb == null) {
+                    if ((p.requestHeader != null) && (p.requestHeader.getType() != OpCode.ping) &&\ (p.requestHeader.getType() != OpCode.auth)) {
+                        p.requestHeader.setXid(cnxn.getXid());
+                    }
+                    p.createBB();
+                }
+                sock.write(p.bb);
+                if (!p.bb.hasRemaining()) {
+                    sentCount++;
+                    outgoingQueue.removeFirstOccurrence(p);
+                    if (p.requestHeader != null && p.requestHeader.getType() != OpCode.ping && p.requestHeader.getType() != OpCode.auth) {
+                        synchronized (pendingQueue) {
+                            pendingQueue.add(p);
+                        }
+                    }
+                }
+            }
+            if (outgoingQueue.isEmpty()) {
+                // No more packets to send: turn off write interest flag.
+                disableWrite();
+            } else if (!initialized && p != null && !p.bb.hasRemaining()) {
+                disableWrite();
+            } else {
+                // Just in case
+                enableWrite();
+            }
+        }
+    }
+}
+```
+#### SendThread.readResponse
+>该方法里主要流程：  
+①读取header，若xid=-2，是一个ping的response，return；    
+②若xid=-4，是一个AuthPacket的response，return；  
+③若xid=-1，是一个notification，此时继续读取并构造一个enent，通过EventThread.queueEvent发送，return；  
+④其它情况：从pendingQueue拿出一个Packet，校验后更新packet信息。
+
+```java 
+// org.apache.zookeeper.ClientCnxn
+// class SendThread extends ZooKeeperThread {
+void readResponse(ByteBuffer incomingBuffer) throws IOException {
+    ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
+    BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
+    ReplyHeader replyHdr = new ReplyHeader();
+    // 反序列化header
+    replyHdr.deserialize(bbia, "header");
+    if (replyHdr.getXid() == -2) {
+        // -2 is the xid for pings
+        return;
+    }
+    if (replyHdr.getXid() == -4) {
+        // -4 is the xid for AuthPacket               
+        if(replyHdr.getErr() == KeeperException.Code.AUTHFAILED.intValue()) {
+            state = States.AUTH_FAILED;                    
+            eventThread.queueEvent( new WatchedEvent(Watcher.Event.EventType.None,Watcher.Event.KeeperState.AuthFailed, null) );            		            		
+        }
+        return;
+    }
+    // 表示当前消息类型为notification(服务端的一个响应事件)
+    if (replyHdr.getXid() == -1) {
+        // -1 means notification
+        WatcherEvent event = new WatcherEvent();
+        // 反序列化响应信息
+        event.deserialize(bbia, "response");
+        // convert from a server path to a client path
+        if (chrootPath != null) {
+            String serverPath = event.getPath();
+            if(serverPath.compareTo(chrootPath)==0)
+                event.setPath("/");
+            else if (serverPath.length() > chrootPath.length())
+                event.setPath(serverPath.substring(chrootPath.length()));
+            else {
+            	LOG.warn("Got server path " + event.getPath()+ " which is too short for chroot path "+ chrootPath);
+            }
+        }
+
+        WatchedEvent we = new WatchedEvent(event);
+        eventThread.queueEvent( we );
+        return;
+    }
+    if (clientTunneledAuthenticationInProgress()) {
+        GetSASLRequest request = new GetSASLRequest();
+        request.deserialize(bbia,"token");
+        zooKeeperSaslClient.respondToServer(request.getToken(), ClientCnxn.this);
+        return;
+    }
+
+    Packet packet;
+    // private final LinkedList<Packet> pendingQueue = new LinkedList<Packet>();
+    synchronized (pendingQueue) {
+        if (pendingQueue.size() == 0) {
+            throw new IOException("Nothing in the queue, but got " + replyHdr.getXid());
+        }
+        // 当前数据包已收到响应，故将其从pendingQueued移除
+        packet = pendingQueue.remove();
+    }
+    try {
+        // 校验数据包信息，成功后将数据包信息更新（替换为服务端信息）
+        if (packet.requestHeader.getXid() != replyHdr.getXid()) {
+            packet.replyHeader.setErr( KeeperException.Code.CONNECTIONLOSS.intValue());
+            throw new IOException("Xid out of order. Got Xid "replyHdr.getXid() + " with err " ++ replyHdr.getErr() +" expected Xid "+ packet.requestHeader.getXid()+ " for a packet with details: "+ packet );
+        }
+
+        packet.replyHeader.setXid(replyHdr.getXid());
+        packet.replyHeader.setErr(replyHdr.getErr());
+        packet.replyHeader.setZxid(replyHdr.getZxid());
+        if (replyHdr.getZxid() > 0) {
+            lastZxid = replyHdr.getZxid();
+        }
+        if (packet.response != null && replyHdr.getErr() == 0) {
+            // 获得服务端响应，反序列化后设置到packet.response属性中。可在exists方法最后一行通过packet.response拿到该请求返回结果
+            packet.response.deserialize(bbia, "response");
+        }
+    } finally {
+        // 最后调用【finishPacket】方法完成处理
+        finishPacket(packet);
+    }
+}
+```
+#### finishPacket
+>主要功能：从Packet中取出对应的Watcher并注册到ZKWatchManager。
+
+```java 
+// org.apache.zookeeper.ClientCnxn
+private void finishPacket(Packet p) {
+    if (p.watchRegistration != null) {
+        // 将事件注册到zkwatchemanager中
+        // org.apache.zookeeper.ClientCnxn.Packet->WatchRegistration watchRegistration;
+        // 在组装请求时，初始化对象，把watchRegistration子类里面的Watcher实例放到ZKWatchManager的existsWatches中存储起来。
+        // org.apache.zookeeper.ZooKeeper.ZKWatchManager
+        // 【watchRegistration.register】
+        p.watchRegistration.register(p.replyHeader.getErr());
+    }
+    // 若为null，表明是同步调用的接口，不需异步回调，直接notifyAll
+    // AsyncCallback cb;
+    if (p.cb == null) {
+        synchronized (p) {
+            p.finished = true;
+            p.notifyAll();
+        }
+    } else {
+        p.finished = true;
+        // org.apache.zookeeper.ClientCnxn.EventThread
+        // private final LinkedBlockingQueue<Object> waitingEvents = new LinkedBlockingQueue<Object>();
+        // 将所有移除的监视事件添加到事件队列, 这样客户端能收到 “data/child 事件被移除”的事件类型
+        // 【eventThread.queuePacket】
+        eventThread.queuePacket(p);
+    }
+}
+```
+##### watchRegistration
+
+```java 
+// org.apache.zookeeper.ZooKeeper.WatchRegistration
+public void register(int rc) {
+    if (shouldAddWatch(rc)) {
+        // 通过子类实现取得ZKWatchManager中的existsWatches
+        // org.apache.zookeeper.ZooKeeper.ExistsWatchRegistration\ChildWatchRegistration\DataWatchRegistration
+        Map<String, Set<Watcher>> watches = getWatches(rc);
+        synchronized(watches) {
+            Set<Watcher> watchers = watches.get(clientPath);
+            if (watchers == null) {
+                watchers = new HashSet<Watcher>();
+                watches.put(clientPath, watchers);
+            }
+            // 将Watcher对象放到ZKWatchManager中的existsWatches
+            // private final Map<String, Set<Watcher>> existWatches = new HashMap<String, Set<Watcher>>();
+            watchers.add(watcher);
+        }
+    }
+}
+```
+>以下为客户端存储watcher的几个map集合，分别对应三种注册监听事件。
+
+```java 
+// org.apache.zookeeper.ZooKeeper.ZKWatchManager
+private static class ZKWatchManager implements ClientWatchManager {
+    private final Map<String, Set<Watcher>> dataWatches = new HashMap<String, Set<Watcher>>();
+    private final Map<String, Set<Watcher>> existWatches = new HashMap<String, Set<Watcher>>();
+    private final Map<String, Set<Watcher>> childWatches = new HashMap<String, Set<Watcher>>();
+    ......
+```
+>总结：当用ZooKeeper构造方法或用getData、exists和getChildren来向ZooKeeper服务器注册Watcher时，①首先将此消息传递给服务端，传递成功后，服务端会通知客户端；②然后客户端将该路径和Watcher对应关系存储起来备用。
+
+##### EventThread.queuePacket
+>finishPacket最终调用eventThread.queuePacket，将当前数据包添加到等待事件通知队列。
+```java 
+// org.apache.zookeeper.ClientCnxn.EventThread
+public void queuePacket(Packet packet) {
+  if (wasKilled) {
+     // private final LinkedBlockingQueue<Object> waitingEvents = new LinkedBlockingQueue<Object>();
+     synchronized (waitingEvents) {
+        if (isRunning) waitingEvents.add(packet);
+        else processEvent(packet);
+     }
+  } else {
+     waitingEvents.add(packet);
+  }
 }
 ```
