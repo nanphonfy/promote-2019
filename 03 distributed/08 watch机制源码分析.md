@@ -667,3 +667,88 @@ public void queuePacket(Packet packet) {
   }
 }
 ```
+### 事件触发
+>前面介绍了事件的注册流程，最终触发还需通过事务型操作完成。  
+eg.zookeeper.setData("/test","1".getByte(),-1);  
+//修改节点值触发监听
+
+#### 服务端的事件响应DataTree
+```java 
+public Stat setData(String path, byte data[], int version, long zxid, long time) throws KeeperException.NoNodeException {
+    Stat s = new Stat();
+    DataNode n = nodes.get(path);
+    if (n == null) {
+        throw new KeeperException.NoNodeException();
+    }
+    byte lastdata[] = null;
+    synchronized (n) {
+        lastdata = n.data;
+        n.data = data;
+        n.stat.setMtime(time);
+        n.stat.setMzxid(zxid);
+        n.stat.setVersion(version);
+        n.copyStat(s);
+    }
+    // now update if the path is in a quota subtree.
+    String lastPrefix;
+    if((lastPrefix = getMaxPrefixWithQuota(path)) != null) {
+      this.updateBytes(lastPrefix, (data == null ? 0 : data.length) - (lastdata == null ? 0 : lastdata.length));
+    }
+    // 触发对应节点的NodeDataChanged事件
+    dataWatches.triggerWatch(path, EventType.NodeDataChanged);
+    return s;
+}
+```
+##### WatcherManager.triggerWatch
+```java 
+// org.apache.zookeeper.server.WatchManager
+public Set<Watcher> triggerWatch(String path, EventType type, Set<Watcher> supress) {
+    // 根据事件类型、连接状态、节点路径创建 WatchedEvent
+    WatchedEvent e = new WatchedEvent(type, KeeperState.SyncConnected, path);
+    HashSet<Watcher> watchers;
+    synchronized (this) {
+        // 从watcher表中移除path，并返回其对应的watcher集合
+        watchers = watchTable.remove(path);
+        if (watchers == null || watchers.isEmpty()) {
+            return null;
+        }
+        // 遍历watcher集合
+        for (Watcher w : watchers) {
+            // 根据watcher从watcher表中取出路径集合
+            HashSet<String> paths = watch2Paths.get(w);
+            if (paths != null) {
+                // 移除路径
+                paths.remove(path);
+            }
+        }
+    }
+    for (Watcher w : watchers) {
+        if (supress != null && supress.contains(w)) {
+            continue;
+        }
+        // 【process】
+        w.process(e);
+    }
+    return watchers;
+}
+```
+##### Watcher.process(WatchedEvent e);
+>在服务端绑定事件时，watcher绑定了ServerCnxn，故w.process(e)实际调用ServerCnxn的process。而 servercnxn是一个抽象方法，有两个实现类：NIOServerCnxn 和 NettyServerCnxn。 
+
+```java 
+public void process(WatchedEvent event) {
+    ReplyHeader h = new ReplyHeader(-1, -1L, 0);
+    // Convert WatchedEvent to a type that can be sent over the wire
+    WatcherEvent e = event.getWrapper();
+
+    try {
+        // 发送了一个事件，事件对象为WatcherEvent
+        sendResponse(h, e, "notification");
+    } catch (IOException e1) {
+        close();
+    }
+}
+```
+>接下来，客户端会收到该response，触发SendThread.readResponse。
+
+#### 客户端处理事件响应
