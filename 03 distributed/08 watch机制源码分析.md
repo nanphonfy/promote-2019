@@ -752,3 +752,242 @@ public void process(WatchedEvent event) {
 >接下来，客户端会收到该response，触发SendThread.readResponse。
 
 #### 客户端处理事件响应
+##### SendThread.readResponse
+
+```java 
+// org.apache.zookeeper.ClientCnxn.SendThread
+void readResponse(ByteBuffer incomingBuffer) throws IOException {
+    ByteBufferInputStream bbis = new ByteBufferInputStream(incomingBuffer);
+    BinaryInputArchive bbia = BinaryInputArchive.getArchive(bbis);
+    ReplyHeader replyHdr = new ReplyHeader();
+
+    replyHdr.deserialize(bbia, "header");
+    if (replyHdr.getXid() == -2) {
+        // -2 is the xid for pings
+        return;
+    }
+    if (replyHdr.getXid() == -4) {
+        // -4 is the xid for AuthPacket               
+        if(replyHdr.getErr() == KeeperException.Code.AUTHFAILED.intValue()) {
+            state = States.AUTH_FAILED;                    
+            eventThread.queueEvent( new WatchedEvent(Watcher.Event.EventType.None, Watcher.Event.KeeperState.AuthFailed, null) );            		            		
+        }
+        return;
+    }
+    if (replyHdr.getXid() == -1) {
+        // -1 means notification
+        WatcherEvent event = new WatcherEvent();
+        // 【反序列化服务端的WatcherEvent事件】
+        event.deserialize(bbia, "response");
+
+        // convert from a server path to a client path
+        if (chrootPath != null) {
+            String serverPath = event.getPath();
+            if(serverPath.compareTo(chrootPath)==0)
+                event.setPath("/");
+            else if (serverPath.length() > chrootPath.length())
+                event.setPath(serverPath.substring(chrootPath.length()));
+            else {
+            	LOG.warn("Got server path " + event.getPath()+ " which is too short for chroot path "+ chrootPath);
+            }
+        }
+        // 组装watchedEvent对象
+        WatchedEvent we = new WatchedEvent(event);
+        // 【通过eventTherad进行事件处理】
+        eventThread.queueEvent( we );
+        return;
+    }
+
+    if (clientTunneledAuthenticationInProgress()) {
+        GetSASLRequest request = new GetSASLRequest();
+        request.deserialize(bbia,"token");
+        zooKeeperSaslClient.respondToServer(request.getToken(),ClientCnxn.this);
+        return;
+    }
+
+    Packet packet;
+    synchronized (pendingQueue) {
+        if (pendingQueue.size() == 0) {
+            throw new IOException("Nothing in the queue, but got "+ replyHdr.getXid());
+        }
+        packet = pendingQueue.remove();
+    }
+    try {
+        if (packet.requestHeader.getXid() != replyHdr.getXid()) {
+            packet.replyHeader.setErr(KeeperException.Code.CONNECTIONLOSS.intValue());
+            throw new IOException("Xid out of order. Got Xid "+ replyHdr.getXid() + " with err " + replyHdr.getErr() +" expected Xid "+ packet.requestHeader.getXid()+ " for a packet with details: "+ packet );
+        }
+
+        packet.replyHeader.setXid(replyHdr.getXid());
+        packet.replyHeader.setErr(replyHdr.getErr());
+        packet.replyHeader.setZxid(replyHdr.getZxid());
+        if (replyHdr.getZxid() > 0) {
+            lastZxid = replyHdr.getZxid();
+        }
+        if (packet.response != null && replyHdr.getErr() == 0) {
+            packet.response.deserialize(bbia, "response");
+        }
+    } finally {
+        finishPacket(packet);
+    }
+}
+```
+#### eventThread.queueEvent
+>SendThread收到服务端的通知事件后，会调用EventThread.queueEvent将事件传给EventThread线程，queueEvent方法根据该通知事件，从ZKWatchManager中取出所有相关的Watcher，若获取到相应的Watcher，会让Watcher移除失效。
+
+```java 
+// org.apache.zookeeper.ClientCnxn.EventThread
+public void queueEvent(WatchedEvent event) {
+    // 判断类型
+    if (event.getType() == EventType.None && sessionState == event.getState()) {
+        return;
+    }
+    sessionState = event.getState();
+    //封装WatcherSetEventPair对象，添加到waitngEvents队列中
+    // materialize the watchers based on the event
+    // 【Meterialize方法】 private final ClientWatchManager watcher;
+    WatcherSetEventPair pair = new WatcherSetEventPair(watcher.materialize(event.getState(),event.getType(),event.getPath()),event);
+    // queue the pair (watch set & event) for later processing
+    // private final LinkedBlockingQueue<Object> waitingEvents = new LinkedBlockingQueue<Object>();
+    // 【waitingEvents.add】
+    waitingEvents.add(pair);
+}
+```
+#### Meterialize方法
+>通过dataWatches或existWatches或childWatches remove出对应watch，表明客户端watch也是注册一次就移除
+同时需根据keeperState、eventType和path返回应被通知的Watcher集合。  
+```java 
+// org.apache.zookeeper.ZooKeeper.ZKWatchManager
+public Set<Watcher> materialize(Watcher.Event.KeeperState state, Watcher.Event.EventType type, String clientPath) {
+    /*private final Map<String, Set<Watcher>> dataWatches = new HashMap<String, Set<Watcher>>();
+    private final Map<String, Set<Watcher>> existWatches = new HashMap<String, Set<Watcher>>();
+    private final Map<String, Set<Watcher>> childWatches = new HashMap<String, Set<Watcher>>();
+    private volatile Watcher defaultWatcher;*/
+    Set<Watcher> result = new HashSet<>();
+
+    switch (type) {
+    case None:
+        result.add(defaultWatcher);
+        boolean clear = ClientCnxn.getDisableAutoResetWatch() && state != Watcher.Event.KeeperState.SyncConnected;
+
+        synchronized (dataWatches) {
+            for (Set<Watcher> ws : dataWatches.values()) {
+                result.addAll(ws);
+            }
+            if (clear) {
+                dataWatches.clear();
+            }
+        }
+
+        synchronized (existWatches) {
+            for (Set<Watcher> ws : existWatches.values()) {
+                result.addAll(ws);
+            }
+            if (clear) {
+                existWatches.clear();
+            }
+        }
+
+        synchronized (childWatches) {
+            for (Set<Watcher> ws : childWatches.values()) {
+                result.addAll(ws);
+            }
+            if (clear) {
+                childWatches.clear();
+            }
+        }
+
+        return result;
+    case NodeDataChanged:
+    case NodeCreated:
+        synchronized (dataWatches) {
+            addTo(dataWatches.remove(clientPath), result);
+        }
+        synchronized (existWatches) {
+            addTo(existWatches.remove(clientPath), result);
+        }
+        break;
+    case NodeChildrenChanged:
+        synchronized (childWatches) {
+            addTo(childWatches.remove(clientPath), result);
+        }
+        break;
+    case NodeDeleted:
+        synchronized (dataWatches) {
+            addTo(dataWatches.remove(clientPath), result);
+        }
+        // XXX This shouldn't be needed, but just in case
+        synchronized (existWatches) {
+            Set<Watcher> list = existWatches.remove(clientPath);
+            if (list != null) {
+                addTo(list, result);
+                LOG.warn("We are triggering an exists watch for delete! Shouldn't happen!");
+            }
+        }
+        synchronized (childWatches) {
+            addTo(childWatches.remove(clientPath), result);
+        }
+        break;
+    default:
+        String msg = "Unhandled watch event type " + type + " with state " + state + " on path " + clientPath;
+        LOG.error(msg);
+        throw new RuntimeException(msg);
+    }
+
+    return result;
+}
+}
+```
+#### waitingEvents.add
+>waitingEvents是EventThread线程的阻塞队列。waitingEvents是一个待处理Watcher队列，EventThread的run() 方法不断从队列中取数据，交由processEvent方法处理。
+```java 
+// org.apache.zookeeper.ClientCnxn.EventThread
+public void run() {
+    try {
+        isRunning = true;
+        while (true) {
+            Object event = waitingEvents.take();
+            if (event == eventOfDeath) {
+                wasKilled = true;
+            } else {
+                // 【processEvent方法】
+                processEvent(event);
+            }
+            if (wasKilled)
+                synchronized (waitingEvents) {
+                    if (waitingEvents.isEmpty()) {
+                        isRunning = false;
+                        break;
+                    }
+                }
+        }
+    } catch (InterruptedException e) {
+        LOG.error("Event thread exiting due to interruption", e);
+    }
+
+    LOG.info("EventThread shut down for session: 0x{}", Long.toHexString(getSessionId()));
+}
+```
+##### ProcessEvent
+>只贴核心代码
+```java 
+// org.apache.zookeeper.ClientCnxn.EventThread
+private void processEvent(Object event) {
+   try {
+       // 判断事件类型
+       if (event instanceof WatcherSetEventPair) {
+           // each watcher will process the event
+           // 得到watcherseteventPair
+           WatcherSetEventPair pair = (WatcherSetEventPair) event;
+           // 拿到符合触发机制的所有watcher列表，循环调用
+           for (Watcher watcher : pair.watchers) {
+               try {
+                    // 调用客户端回调process
+                   watcher.process(pair.event);
+               } catch (Throwable t) {
+                   LOG.error("Error while calling watcher ", t);
+               }
+           }
+       } else {
+       ......
+```
