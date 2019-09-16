@@ -39,9 +39,24 @@ zookeeper架构，可用来解决task多实例执行问题，各服务先去zook
 >该阶段，协调者根据各参与者的反馈情况决定最终的事务提交操作，包含两种可能:执行事务、中断事务。
 
 ### 集群
->zookeeper中，客户端会随机连接到zookeeper集群中的一个节点。若是读请求，直接从当前节点读取数据；若是写请求，会被转发给leader提交事务，leader会广播事务，只要有超过半数节点写入成功，那么写请求就会被提交（类 2PC 事务）所有事务请求必须由一个全局唯一的服务器来协调处理，
-这个服务器就是 Leader 服务器，其他的服务器就是
-follower。 leader 服务器把客户端的失去请求转化成一个事
-务 Proposal（提议） ，并把这个 Proposal 分发给集群中的
-所有 Follower 服务器。之后 Leader 服务器需要等待所有
+>zookeeper中，客户端会随机连接到zookeeper集群中的一个节点。若是读请求，直接从当前节点读取数据；若是写请求，会被转发给leader提交事务(广播)，超半数节点写入成功，则被提交（类2PC事务）所有事务请求必须由一个全局唯一的服务器协调处理，该服务器即leader，其他服务器即follower。   
+leader服务器把客户端的请求转化成一个事务proposal（提议），并把该proposal分发给集群中所有follower，之后leader需等待所有follower的反馈，超半数follower正确反馈，leader会再次向所有follower发送commit消息，要求各follower节点提交前面一个proposal。
+
+#### 集群角色
+- Leader角色
+>整个zookeeper集群的核心，主要工作：  
+>1.事务请求的唯一调度和处理者，保证集群事务处理的顺序性；  
+2.集群内部各服务器的调度者。
+
+- Follower角色
+>主要职责：  
+>1.处理客户端非事务请求、转发事务请求给leader；  
+2.参与事务请求Proposal的投票（需半数以上服务器通过才通知leader提交数据；  
+3.参与Leader选举的投票。  
+
+- Observer角色
+>zookeeper3.3开始引入的全新角色，观察者角色。
+观察zookeeper集群中最新状态变化，将这些状态变化同步到observer上。工作原理与follower角色基本一致，唯一不同：observer不参与任何形式的投票，包括事务请求proposal的投票和leader选举的投票。简单说，observer只提供非事务请求服务，通常在于不影响集群事务处理能力的前提下提升集群非事务处理的能力。
+
+
 https://blog.csdn.net/qq_16038125/article/details/80920240
