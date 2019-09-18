@@ -58,5 +58,31 @@ leader服务器把客户端的请求转化成一个事务proposal（提议），
 >zookeeper3.3开始引入的全新角色，观察者角色。
 观察zookeeper集群中最新状态变化，将这些状态变化同步到observer上。工作原理与follower角色基本一致，唯一不同：observer不参与任何形式的投票，包括事务请求proposal的投票和leader选举的投票。简单说，observer只提供非事务请求服务，通常在于不影响集群事务处理能力的前提下提升集群非事务处理的能力。
 
+- 集群组成
+>zookeeper由2n+1台server组成，每个server都知道彼此存在。对于2n+1台server，只要有n+1台（大
+多数）server可用，整个系统保持可用。   集群要对外提供可用的服务，必须有过半机器正常工作且彼此正常通信，基于该特性，若向搭建一个能允许F台机器down掉的集群，则要部署2*F+1台服务器构成的zookeeper集群。故3台机器构成的zookeeper集群，能够在挂掉一台机器后依然正常工作。
+>5台机器的集群，允许2台机器挂掉；6台机器的集群，只能挂掉2台机器。故5台和6台在容灾能力上并无明显优势，反而增加网络通信负担。系统启动时，集群中的server会选举出一台server为Leader，其它的就作为follower（先不考虑observer角色） 。
+
+### ZAB协议
+>Zookeeper Atomic Broadcast协议，是为ZooKeeper设计的支持崩溃恢复的原子广播协议。主要依赖ZAB协议实现分布式数据一致性，基于该协议实现主备模式的系统架构，保持集群各副本间数据一致性。  
+#### zab协议介绍
+>包含两种基本模式：1.崩溃恢复；2.原子广播。
+
+>①当集群启动或leader节点网络中断、崩溃（等）时，ZAB协议会进入恢复模式并选举新leader；②当leader选举出后，且集群有过半机器和该leader完成数据同步后，ZAB协议会退出恢复模式；③当集群有过半follower和leader状态同步后，会进入消息广播模式。  
+此时，leader正常工作时，加入一台新服务器，会直接进入数据恢复模式，和leader数据同步。同步完后即可正常对外提供非事务请求处理。
+
+#### 消息广播实现原理
+>分布式事务的2pc和3pc协议，消息广播过程是简化版的二阶段提交：
+>- 1.leader收到请求后，将消息赋予全局唯一64位自增id——zxid，通过其大小比较即可实现因果有序；  
+>- 2.leader为每个follower准备一个FIFO队列（TCP协议实现，全局有序）将带有zxid的消息作为一个提案（proposal）分发给所有的follower；  
+>- 3.当follower收到proposal，先把proposal写到磁盘，成功后再向leader回复ack；  
+>- 4.当leader收到合法数量（超半数节点）的ACK 后，leader向这些follower发送commit命令，同时在本地执行该消息；  
+>- 5.当follower收到消息的commit命令后，会提交该消息leader的投票过程，不需observer的ack，即observer不需参与投票过程，但需同步leader数据从而在处理请求时保证数据一致性。
+
+### 崩溃恢复
+>ZAB协议基于原子广播协议的消息广播过程，一旦 leader崩溃，或网络问题导致leader失去过半follower联系（可能leader和follower间产生网络分区，此时leader不再合法），会进入崩溃恢复模式。在 ZAB协议中，为保证程序正确运行，整个恢复过程结束后需选举出一个新leader。  
+为使leader挂了后系统正常工作，需解决以下两
+个问题：
+
 
 https://blog.csdn.net/qq_16038125/article/details/80920240
