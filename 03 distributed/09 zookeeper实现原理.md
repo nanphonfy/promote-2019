@@ -83,6 +83,23 @@ leader服务器把客户端的请求转化成一个事务proposal（提议），
 >ZAB协议基于原子广播协议的消息广播过程，一旦 leader崩溃，或网络问题导致leader失去过半follower联系（可能leader和follower间产生网络分区，此时leader不再合法），会进入崩溃恢复模式。在 ZAB协议中，为保证程序正确运行，整个恢复过程结束后需选举出一个新leader。  
 为使leader挂了后系统正常工作，需解决以下两
 个问题：
+>- 1.已被处理的消息不能丢失。当leader收到合法数量的follower的ACK后，向各follower广播COMMIT命令，同时在本地执行COMMIT并返回给客户端。   若各follower收到COMMIT前，leader挂了，导致剩下的服务器没执行该消息。  
+leader对事务消息发起commit操作，在follower1执行了，follower2还没收到commit已经挂了，而客户端已收到事务处理成功的响应。故zab协议需保证所有机器都要执行该事务消息。  
+>- 2.被丢弃的消息不能再出现。当leader收到消息请求生成proposal后挂了，其他follower没收到此 proposal，经恢复模式重新选了leader后，该消息被跳过。此时之前挂的leader重启并注册成follower，保留被跳过的proposal状态，与整个系统状态是不一致的，需将其删除。  
+
+>ZAB协议需满足以上两情况，要设计leader选举算法：确保已被leader提交的事务proposal能够提交、 同时丢弃已被跳过的事务proposal。  
+>- 1.若leader选举算法能保证新选举出的leader拥有集群中所有机器最高编号（ZXID最大）的事务
+proposal， 保证新选举的leader一定具有已提交提案。必须有超半数服务器的事务日志有该提案的 proposal， 故有合法数量的节点正常工作，必然有一个节点保存了所有被COMMIT消息的proposal 状态。  
+>- 2.zxid是64位，高32位：epoch编号，每经过
+一次leader选举产生新leader，epoch号+1；低32 位：消息计数器，每收到一条消息，值+1，新leader选举后值重置为0。——好处：老leader挂了后重启，不会被选举为leader，因此zxid肯定小于当前新leader。当老leader作为follower接入新leader后，新leader会让它将所有拥有旧epoch号的未被COMMIT的proposal清除。  
+#### ZXID
+>即事务id，为保证事务顺序的一致性，zookeeper 采用递增事务id号（zxid）标识事务。所有提议（proposal）都在被提出时加上zxid。zxid是64位数字，高32位是epoch（ZAB协议通过epoch编号区分leader周期变化策略）用来标识leader关系是否改变，每次一个leader被选出，都会有一个新epoch=（原epoch+1），标识当前属于那个leader的统治时期。低32位用于递增计数。
+>>epoch：可理解为当前集群所处年代或周期，每个leader像皇帝有年号，每次改朝换代后，都会在前一个年代加1。旧leader崩溃恢复后，也无人听它，follower只听从当前年代的leader命令。
+
+- epoch变化实验
+>1.启动一个zookeeper集群；  
+2.在/tmp/zookeeper/VERSION-2路径下的currentEpoch文件，显示的是当前的epoch；  
+3.把leader停机，观看currentEpoch的变化。随着每次选举新leader，epoch都会发生变化。  
 
 
 https://blog.csdn.net/qq_16038125/article/details/80920240
