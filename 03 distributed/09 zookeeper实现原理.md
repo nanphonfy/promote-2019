@@ -101,5 +101,26 @@ proposal， 保证新选举的leader一定具有已提交提案。必须有超�
 2.在/tmp/zookeeper/VERSION-2路径下的currentEpoch文件，显示的是当前的epoch；  
 3.把leader停机，观看currentEpoch的变化。随着每次选举新leader，epoch都会发生变化。  
 
+### leader选举
+>leader选举分两个过程：启动时的leader选举、 leader崩溃时的选举。  
+>服务器启动时的leader选举，每个节点启动时状态都是LOOKING（观望状态），至少需两台机器 。以3台为例，集群初始化阶段，当有一台服务器 server1启动时，它本身无法进行和完成leader选举，当第二台服务器server2启动时，此时可相互通信，都试图找到leader，于是进入leader选举过程：
+>①每个server投票一次，初始情况server1、2都投自己为leader，每次投票包含所推举服务器的myid和ZXID、epoch，eg.server1投票为(1,0)，server2投票为(2,0)，然后将该投票发给集群中其他机器；  
+②接受各服务器的投票。每个服务器收到投票后，先判断投票的有效性（eg.是否本轮投票epoch、是否LOOKING状态服务器）；    
+③处理投票。针对每个投票，服务器都需将别的投票和自己的投票PK，规则如下：
+>>i.优先检查ZXID，比较大的优先作为leader；  
+ii.ZXID同，则比较myid，较大的作为leader；
+eg.server1投票：(1, 0)，server2投票：(2,0)，比较两者ZXID，均为 0，再比较 myid，server2较大。于是更新自己的投票为(2, 0)， 然后重新投票。  
+server2不需更新自己的投票，只需再向集群发出上一次投票信息即可。  
+
+>④统计投票。每次投票后，服务器会统计投票信息，判断是否已过半机器收到相同投票信息，对于server1、2而言，都统计出集群中已有两台机器收到(2,0)投票信息，则认为已选出leader；  
+⑤改变服务器状态。一旦确定leader，每个服务器会更新状态：follower->FOLLOWING、leader->LEADING。
+
+#### 运行过程中的leader选举
+>当集群的leader宕机或不可用时，集群将无法对外提供服务，进入新一轮选举，运行期间leader选举和启动时期基本过程一致。  
+①变更状态。leader挂后，余下的非Observer都会将自己的服务器状态变更为LOOKING，然后进入leader选举过程；  
+②每个server发出一个投票，运行期间每个服务器的ZXID可能不同。eg.server1的ZXID=123， Server3的ZXID=122，第一轮投票，server1、3都会投自己，产生投票(1,123)、(3, 122)，将投票发送给集群所有机器，接收来自各服务器的投票。与启动时同；  
+③处理投票。与启动时同，此时server1成为leader；  
+④统计投票。与启动时同；  
+⑤改变服务器状态。与启动时同。  
 
 https://blog.csdn.net/qq_16038125/article/details/80920240
