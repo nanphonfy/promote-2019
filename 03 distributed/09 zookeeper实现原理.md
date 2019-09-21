@@ -123,4 +123,211 @@ server2不需更新自己的投票，只需再向集群发出上一次投票信�
 ④统计投票。与启动时同；  
 ⑤改变服务器状态。与启动时同。  
 
+
+### leader选举源码分析
+
+```
+// org.apache.zookeeper.server.quorum.QuorumPeerMain
+public static void main(String[] args) {
+    QuorumPeerMain main = new QuorumPeerMain();
+    try {
+        main.initializeAndRun(args);
+        ......
+        
+protected void initializeAndRun(String[] args) throws ConfigException, IOException {
+    QuorumPeerConfig config = new QuorumPeerConfig();
+    if (args.length == 1) {
+        config.parse(args[0]);
+    }
+
+    // Start and schedule the the purge task
+    DatadirCleanupManager purgeMgr = new DatadirCleanupManager(config.getDataDir(), config.getDataLogDir(),config.getSnapRetainCount(),config.getPurgeInterval());
+    purgeMgr.start();
+
+    //判断是standalone或集群模式
+    if (args.length == 1 && config.servers.size() > 0) {
+        runFromConfig(config);
+    } else {
+        // there is only server in the quorum -- run as standalone
+        ZooKeeperServerMain.main(args);
+    }
+}
+
+public void runFromConfig(QuorumPeerConfig config) throws IOException {
+  try {
+      ManagedUtil.registerLog4jMBeans();
+  } catch (JMException e) {
+      LOG.warn("Unable to register log4j JMX control", e);
+  }
+
+  LOG.info("Starting quorum peer");
+  try {
+      // 为客户端提供读写的server，2181端口的访问功能
+      ServerCnxnFactory cnxnFactory = ServerCnxnFactory.createFactory();
+      cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns());
+
+      // ZK的逻辑主线程，负责选举、投票
+      quorumPeer = getQuorumPeer();
+      quorumPeer.setQuorumPeers(config.getServers());
+      quorumPeer.setTxnFactory(new FileTxnSnapLog(new File(config.getDataLogDir()), new File(config.getDataDir())));
+      quorumPeer.setElectionType(config.getElectionAlg());
+      quorumPeer.setMyid(config.getServerId());
+      quorumPeer.setTickTime(config.getTickTime());
+      quorumPeer.setInitLimit(config.getInitLimit());
+      quorumPeer.setSyncLimit(config.getSyncLimit());
+      quorumPeer.setQuorumListenOnAllIPs(config.getQuorumListenOnAllIPs());
+      quorumPeer.setCnxnFactory(cnxnFactory);
+      quorumPeer.setQuorumVerifier(config.getQuorumVerifier());
+      quorumPeer.setClientPortAddress(config.getClientPortAddress());
+      quorumPeer.setMinSessionTimeout(config.getMinSessionTimeout());
+      quorumPeer.setMaxSessionTimeout(config.getMaxSessionTimeout());
+      quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
+      quorumPeer.setLearnerType(config.getPeerType());
+      quorumPeer.setSyncEnabled(config.getSyncEnabled());
+
+      // sets quorum sasl authentication configurations
+      quorumPeer.setQuorumSaslEnabled(config.quorumEnableSasl);
+      if (quorumPeer.isQuorumSaslAuthEnabled()) {
+          quorumPeer.setQuorumServerSaslRequired(config.quorumServerRequireSasl);
+          quorumPeer.setQuorumLearnerSaslRequired(config.quorumLearnerRequireSasl);
+          quorumPeer.setQuorumServicePrincipal(config.quorumServicePrincipal);
+          quorumPeer.setQuorumServerLoginContext(config.quorumServerLoginContext);
+          quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
+      }
+      quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+      quorumPeer.initialize();
+      // 启动主线程，QuorumPeer重写了Thread.start方法
+      quorumPeer.start();
+      quorumPeer.join();
+  } catch (InterruptedException e) {
+      // warn, but generally this is ok
+      LOG.warn("Quorum Peer interrupted", e);
+  }
+}
+```
+- 调用quorumpeer的start方法
+```java 
+// org.apache.zookeeper.server.quorum.QuorumPeer
+public synchronized void start() {
+    // 恢复DB
+    loadDataBase();
+    cnxnFactory.start();
+    // 选举初始化
+    startLeaderElection();
+    super.start();
+}
+
+/**主要从本地文件中恢复数据,获取最新zxid**/
+private void loadDataBase() {
+    File updating = new File(getTxnFactory().getSnapDir(), UPDATING_EPOCH_FILENAME);
+    try {
+        // 从本地文件恢复db
+        zkDb.loadDataBase();
+    
+        // load the epochs
+        // 从最新zxid恢复epoch变量、zxid64位、前32位是epoch值，后32位是zxid
+        long lastProcessedZxid = zkDb.getDataTree().lastProcessedZxid;
+        long epochOfZxid = ZxidUtils.getEpochFromZxid(lastProcessedZxid);
+        try {
+            // 从文件中读取当前epoch
+            currentEpoch = readLongFromFile(CURRENT_EPOCH_FILENAME);
+            if (epochOfZxid > currentEpoch && updating.exists()) {
+                if (!updating.delete()) {
+                    throw new IOException("Failed to delete " + updating.toString());
+                }
+            }
+        } catch (FileNotFoundException e) {
+            currentEpoch = epochOfZxid;
+            LOG.info(CURRENT_EPOCH_FILENAME+ " not found! Creating with a reasonable default of {}. This should only happen when you are upgrading your installation",currentEpoch);
+            writeLongToFile(CURRENT_EPOCH_FILENAME, currentEpoch);
+        }
+        ......
+```
+- 初始化leaderelection
+```java 
+// org.apache.zookeeper.server.quorum.QuorumPeer
+synchronized public void startLeaderElection() {
+	try {
+        // 投票给自己
+		currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
+	} catch(IOException e) {
+		RuntimeException re = new RuntimeException(e.getMessage());
+		re.setStackTrace(e.getStackTrace());
+		throw re;
+	}
+    for (QuorumServer p : getView().values()) {
+        if (p.id == myid) {
+            myQuorumAddr = p.addr;
+            break;
+        }
+    }
+    if (myQuorumAddr == null) {
+        throw new RuntimeException("My id " + myid + " not in the peer list");
+    }
+    if (electionType == 0) {
+        try {
+            udpSocket = new DatagramSocket(myQuorumAddr.getPort());
+            responder = new ResponderThread();
+            responder.start();
+        } catch (SocketException e) {
+            throw new RuntimeException(e);
+        }
+    }
+    // 根据配置获取选举算法
+    this.electionAlg = createElectionAlgorithm(electionType);
+}
+
+protected Election createElectionAlgorithm(int electionAlgorithm){
+    Election le=null;
+            
+    //TODO: use a factory rather than a switch
+    switch (electionAlgorithm) {
+    case 0:
+        le = new LeaderElection(this);
+        break;
+    case 1:
+        le = new AuthFastLeaderElection(this);
+        break;
+    case 2:
+        le = new AuthFastLeaderElection(this, true);
+        break;
+    case 3:
+        // leader选举IO负责类
+        qcm = createCnxnManager();
+        QuorumCnxManager.Listener listener = qcm.listener;
+        if(listener != null){
+            // 启动已绑定端口的选举线程，等待集群中其他线程
+            listener.start();
+            // 基于TCP的选举算法
+            le = new FastLeaderElection(this, qcm);
+        } else {
+            LOG.error("Null listener when initializing cnx manager");
+        }
+        ......
+```
+>配置选举算法有3种zoo.cfg配置，默认fast选举。  
+>继续看FastLeaderElection的初始化，主要初始化业务层的发送和接收队列。
+```java 
+// org.apache.zookeeper.server.quorum.FastLeaderElection
+public FastLeaderElection(QuorumPeer self, QuorumCnxManager manager){
+    this.stop = false;
+    this.manager = manager;
+    starter(self, manager);
+}
+
+private void starter(QuorumPeer self, QuorumCnxManager manager) {
+    this.self = self;
+    proposedLeader = -1;
+    proposedZxid = -1;
+    // 业务层发送队列，业务对象ToSend
+    sendqueue = new LinkedBlockingQueue<ToSend>();
+    // 业务层发送队列，业务对象Notification
+    recvqueue = new LinkedBlockingQueue<Notification>();
+    this.messenger = new Messenger(manager);
+}
+```
+>接下来调用fle.start()，即调用FastLeaderElection的start方法，该方法主要初始化发送和接收线程， 左边是FastLeaderElection的start，右边 是messager.start()。  
+
+
+
 https://blog.csdn.net/qq_16038125/article/details/80920240
