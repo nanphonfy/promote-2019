@@ -144,3 +144,17 @@ setData(/zk-persis-np) | NodeDataChanged(exists/getData) | 无
 create(/zk-persis-np/children) | NodeChildrenChanged(getChild) | NodedCreated
 delete(/zk-persis-np/children) | NodeChildrenChanged(getChild) | NodedDeleted
 setData(/zk-persis-np/children)  | - | NodedDataChanged
+
+- ZKWatcherManager  
+![image](https://raw.githubusercontent.com/nanphonfy/note-images/master/promote-2019/distributed/10/ZKWatcherManager.png)
+
+- 服务端接收请求处理流程
+>NettyServerCnxn.receiveMessage  
+ZookeeperServer.processPacket  
+PredRequestProcessor.processRequest  
+SyncRequestProcessor.processRequest   
+FinalRequestProcessor.processRequest  
+ZKDatabase.statNode  
+DataTree.statNode  
+WatcherManager.addWatch  
+NettyServerCnxn.sendResponse  
