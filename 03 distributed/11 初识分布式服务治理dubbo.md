@@ -69,10 +69,10 @@ Dubbo基于Java原生SPI机制思想。
 #### 实现一个SPI机制
 
 
-#### 代码演示
+##### 代码演示
 
 
-#### SPI规范总结
+##### SPI规范总结
 >实现SPI，需按照SPI本身定义的规范进行配置，SPI规范如下：
 >>1.需在classpath下创建一个目录，该目录命名必须是：META-INF/services；  
 2.在该目录下创建一个properties文件，该文件需满足几个条件：
@@ -82,11 +82,29 @@ c)文件的编码格式是UTF-8。
 
 >3.通过java.util.ServiceLoader的加载机制来发现
 
-#### SPI实际应用
+##### SPI实际应用
 >SPI应用在很多地方，JDK官方提供了java.sql.Driver的驱动扩展点。  
 以连接Mysql为例，我们需添加mysql-connector-java依赖。然后，可在该jar包中找到SPI的配置信息。故java.sql.Driver由各数据库厂商自行实现。
 >>spring框架也有大量实现。
 
-#### SPI缺点
+##### SPI缺点
 >1.JDK标准的SPI会一次性加载实例化扩展点的所有实现。在META-INF/service下的文件里加了N个实现类，那么JDK启动时都会一次性全部加载。若有的扩展点实现初始化很耗时或有些实现类并没用到，很浪费资源；  
 2.若扩展点加载失败，会导致调用方报错，该错误很难定位到是该原因。
+
+#### Dubbo优化后的SPI实现
+##### 基于Dubbo提供的SPI规范实现自己的扩展 
+>了解Dubbo的SPI机制前，先通过一段代码初步了解Dubbo的实现方式。
+
+
+##### Dubbo的SPI机制规范
+>大部分思想都和SPI一样，只是下面两个地方有差异。
+>- 1.需在resource目录下配置META-INF/dubbo或META-INF/dubbo/internal或META-INF/services，并基于SPI接口创建一个文件；  
+>- 2.文件名称和接口名称保持一致，文件内容SPI有差异，内容是key，对应value。  
+
+### Dubbo SPI机制源码
+>为什么传入一个myProtocol就能获得自定义的DefineProtocol对象？getAdaptiveExtension是一个什么东西？
+```java 
+1.Protocol protocol = ExtensionLoader. getExtensionLoader(Protocol.class). getExtension("myProtocol");
+2.Protocol protocol = ExtensionLoader.getExtensionLoader(Protocol.class). getAdaptiveExtension();
+```
+
