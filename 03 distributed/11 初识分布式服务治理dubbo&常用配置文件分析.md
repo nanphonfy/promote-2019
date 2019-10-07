@@ -104,7 +104,141 @@ c)文件的编码格式是UTF-8。
 ### Dubbo SPI机制源码
 >为什么传入一个myProtocol就能获得自定义的DefineProtocol对象？getAdaptiveExtension是一个什么东西？
 ```java 
-1.Protocol protocol = ExtensionLoader. getExtensionLoader(Protocol.class). getExtension("myProtocol");
-2.Protocol protocol = ExtensionLoader.getExtensionLoader(Protocol.class). getAdaptiveExtension();
+①Protocol protocol = ExtensionLoader. getExtensionLoader(Protocol.class).getExtension("myProtocol");
+②Protocol protocol = ExtensionLoader.getExtensionLoader(Protocol.class).getAdaptiveExtension();
+```
+#### 源码阅读入口
+>分析完②的代码，对①的理解会很容易。  
+将②分成两段，一段getExtensionLoader、 另一段getAdaptiveExtension。  
+>>第一段通过Class参数获得ExtensionLoader对象，类似工厂模式；  
+第二段getAdaptiveExtension，获得一个自适应的扩展点。
+
+#### Extension源码结构
+>了解源码结构，建立一个全局认识。结构图：
+。。。。。。  
+初步了解这些代码在扩展点中的痕迹。
+
+#### Protocol源码
+>Protocol源码有两个注解：①类级别上的@SPI(“dubbo”)；②@Adaptive。
+>>@SPI：当前该接口是一个扩展点，可实现自己的扩展，默认扩展点是DubboProtocol；  
+@Adaptive：一个自适应扩展点，在方法级别上，会动态生成一个适配器类。
+```java 
+// com.alibaba.dubbo.rpc.Protocol
+@SPI("dubbo")
+public interface Protocol {
+    /**
+     * 获取缺省端口，当用户没有配置端口时使用。
+     * 
+     * @return 缺省端口
+     */
+    int getDefaultPort();
+
+    /**
+     * 暴露远程服务：<br>
+     * 1. 协议在接收请求时，应记录请求来源方地址信息：RpcContext.getContext().setRemoteAddress();<br>
+     * 2. export()必须是幂等的，也就是暴露同一个URL的Invoker两次，和暴露一次没有区别。<br>
+     * 3. export()传入的Invoker由框架实现并传入，协议不需要关心。<br>
+     * 
+     * @param <T> 服务的类型
+     * @param invoker 服务的执行体
+     * @return exporter 暴露服务的引用，用于取消暴露
+     * @throws RpcException 当暴露服务出错时抛出，比如端口已占用
+     */
+    @Adaptive
+    <T> Exporter<T> export(Invoker<T> invoker) throws RpcException;
+
+    /**
+     * 引用远程服务：<br>
+     * 1. 当用户调用refer()所返回的Invoker对象的invoke()方法时，协议需相应执行同URL远端export()传入的Invoker对象的invoke()方法。<br>
+     * 2. refer()返回的Invoker由协议实现，协议通常需要在此Invoker中发送远程请求。<br>
+     * 3. 当url中有设置check=false时，连接失败不能抛出异常，并内部自动恢复。<br>
+     * 
+     * @param <T> 服务的类型
+     * @param type 服务的类型
+     * @param url 远程服务的URL地址
+     * @return invoker 服务的本地代理
+     * @throws RpcException 当连接服务提供方失败时抛出
+     */
+    @Adaptive
+    <T> Invoker<T> refer(Class<T> type, URL url) throws RpcException;
+
+    /**
+     * 释放协议：<br>
+     * 1. 取消该协议所有已经暴露和引用的服务。<br>
+     * 2. 释放协议所占用的所有资源，比如连接和端口。<br>
+     * 3. 协议在释放后，依然能暴露和引用新的服务。<br>
+     */
+    void destroy();
+}
 ```
 
+#### getExtensionLoader
+>该方法需一个Class类型的参数，该参数（必须是接口，必须被@SPI注解注释，否则拒绝处理）表示希望加载的扩展点类型。  
+检查通过后首先会检查ExtensionLoader缓存中是否已存在该扩展对应的ExtensionLoader，若有则直接返回，否则创建一个新ExtensionLoader负责加载该扩展实现，同时将其缓存起来。可以看到对于每一个扩展，dubbo中只会有一个对应的ExtensionLoader实例。
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+public static <T> ExtensionLoader<T> getExtensionLoader(Class<T> type) {
+    if (type == null)
+        throw new IllegalArgumentException("Extension type == null");
+    if(!type.isInterface()) {
+        throw new IllegalArgumentException("Extension type(" + type + ") is not interface!");
+    }
+    if(!withExtensionAnnotation(type)) {
+        throw new IllegalArgumentException("Extension type(" + type + ") is not extension, because WITHOUT @" + SPI.class.getSimpleName() + " Annotation!");
+    }
+    // private final ConcurrentMap<String, Holder<Object>> cachedInstances = new ConcurrentHashMap<String, Holder<Object>>();
+    ExtensionLoader<T> loader = (ExtensionLoader<T>) EXTENSION_LOADERS.get(type);
+    if (loader == null) {
+        EXTENSION_LOADERS.putIfAbsent(type, new ExtensionLoader<T>(type));
+        loader = (ExtensionLoader<T>) EXTENSION_LOADERS.get(type);
+    }
+    return loader;
+}
+
+/**
+ * ExtensionLoader提供了私有构造函数
+ * 且对两个成员变量type/objectFactory赋值
+ * 而objectFactory赋值的意义是什么？先留个悬念
+ * @param type
+ */
+private ExtensionLoader(Class<?> type) {
+    this.type = type;
+    // private final ExtensionFactory objectFactory;
+    objectFactory = (type == ExtensionFactory.class ? null : ExtensionLoader.getExtensionLoader(ExtensionFactory.class).getAdaptiveExtension());
+}
+```
+#### getAdaptiveExtension
+>通过getExtensionLoader获得了对应的ExtensionLoader实例后，再调用getAdaptiveExtension()方法获得一个自适应扩展点。
+>>ps：自适应扩展点实际上就是一个适配器。
+
+>该方法主要做几个事情：
+①从cacheAdaptiveInstance内存缓存获得一个对象实例；  
+②若实例为空，第一次加载，则通过双重检查锁去创建一个适配器扩展点。
+
+```java 
+public T getAdaptiveExtension() {
+    // private final Holder<Object> cachedAdaptiveInstance = new Holder<Object>();
+    Object instance = cachedAdaptiveInstance.get();
+    if (instance == null) {
+        if(createAdaptiveInstanceError == null) {
+            synchronized (cachedAdaptiveInstance) {
+                instance = cachedAdaptiveInstance.get();
+                if (instance == null) {
+                    try {
+                        instance = createAdaptiveExtension();
+                        cachedAdaptiveInstance.set(instance);
+                    } catch (Throwable t) {
+                        createAdaptiveInstanceError = t;
+                        throw new IllegalStateException("fail to create adaptive instance: " + t.toString(), t);
+                    }
+                }
+            }
+        }
+        else {
+            throw new IllegalStateException("fail to create adaptive instance: " + createAdaptiveInstanceError.toString(), createAdaptiveInstanceError);
+        }
+    }
+
+    return (T) instance;
+}
+```
