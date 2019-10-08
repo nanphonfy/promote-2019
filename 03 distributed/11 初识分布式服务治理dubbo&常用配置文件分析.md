@@ -216,6 +216,7 @@ private ExtensionLoader(Class<?> type) {
 ②若实例为空，第一次加载，则通过双重检查锁去创建一个适配器扩展点。
 
 ```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
 public T getAdaptiveExtension() {
     // private final Holder<Object> cachedAdaptiveInstance = new Holder<Object>();
     Object instance = cachedAdaptiveInstance.get();
@@ -242,3 +243,55 @@ public T getAdaptiveExtension() {
     return (T) instance;
 }
 ```
+
+#### createAdaptiveExtension
+>这段代码有两结构：①injectExtension；②getAdaptiveExtensionClass()  
+需先了解getAdaptiveExtensionClass方法做了什么？从后面的.newInstance来看，应该是获得一个类且进行实例)。  
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private T createAdaptiveExtension() {
+    try {
+        // 可以实现扩展点的注入
+        return injectExtension((T) getAdaptiveExtensionClass().newInstance());
+    } catch (Exception e) {
+        throw new IllegalStateException("Can not create adaptive extenstion " + type + ", cause: " + e.getMessage(), e);
+    }
+}
+```
+#### getAdaptiveExtensionClass
+>是获得适配器扩展点的类。  
+做了两件事：  
+①getExtensionClasses()加载所有路径下的扩展点；  
+②createAdaptiveExtensionClass()动态创建一个扩展点cachedAdaptiveClass。有个判断，用来判断当前Protocol扩展点是否存在一个自定义适配器。若有，则直接返回自定义适配器，否则，动态创建，该值在getExtensionClasses中赋值。
+
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private Class<?> getAdaptiveExtensionClass() {
+    getExtensionClasses();
+    // private volatile Class<?> cachedAdaptiveClass = null;
+    if (cachedAdaptiveClass != null) {
+        return cachedAdaptiveClass;
+    }
+    return cachedAdaptiveClass = createAdaptiveExtensionClass();
+}
+```
+#### createAdaptiveExtensionClass
+>动态生成适配器代码，及动态编译。
+>①createAdaptiveExtensionClassCode,动态创建一个字节码文件，返回字符串；  
+②compiler.compile进行编译（默认使用javassist）；  
+③通过ClassLoader加载到jvm。
+
+```java 
+// 创建一个适配器扩展点（创建一个动态字节码文件）
+private Class<?> createAdaptiveExtensionClass() {
+    // 生成字节码代码
+    String code = createAdaptiveExtensionClassCode();
+    // 获得类加载器
+    ClassLoader classLoader = findClassLoader();
+    com.alibaba.dubbo.common.compiler.Compiler compiler = ExtensionLoader.getExtensionLoader(com.alibaba.dubbo.common.compiler.Compiler.class).getAdaptiveExtension();
+    // 动态编译字节码
+    return compiler.compile(code, classLoader);
+}
+```
+
+
