@@ -295,3 +295,19 @@ private Class<?> createAdaptiveExtensionClass() {
 ```
 
 
+```
+<!--提供方信息-->
+<dubbo:application name="dubbo-server" owner="np"/>
+
+<!--注册中心-->
+<dubbo:registry address="N/A"/>
+
+<dubbo:protocol name="dubbo" port="20880"/>
+
+<dubbo:service interface="cn.nanphonfy.dubbo.IUserService" ref="npUserService"/>
+
+<bean id="npUserService" class="cn.nanphonfy.dubbo.UserServiceImpl"/>
+```
+
+
+
