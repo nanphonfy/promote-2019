@@ -115,7 +115,9 @@ c)文件的编码格式是UTF-8。
 
 #### Extension源码结构
 >了解源码结构，建立一个全局认识。结构图：
-。。。。。。  
+
+![image](https://github.com/nanphonfy/note-images/blob/master/promote-2019/distributed/11/pkg-extension.png?raw=true)
+
 初步了解这些代码在扩展点中的痕迹。
 
 #### Protocol源码
@@ -294,7 +296,7 @@ private Class<?> createAdaptiveExtensionClass() {
 }
 ```
 
-
+- server
 ```
 <!--提供方信息-->
 <dubbo:application name="dubbo-server" owner="np"/>
@@ -309,5 +311,17 @@ private Class<?> createAdaptiveExtensionClass() {
 <bean id="npUserService" class="cn.nanphonfy.dubbo.UserServiceImpl"/>
 ```
 
+- client
 
+```
+ <!--提供方信息-->
+<dubbo:application name="dubbo-client" owner="np"/>
 
+<!--注册中心，不依赖-->
+<dubbo:registry address="N/A"/>
+
+<dubbo:protocol name="dubbo" port="20880"/>
+
+<dubbo:reference interface="cn.nanphonfy.dubbo.IUserService" id="npUserService"
+url="dubbo://localhost:20880/cn.nanphonfy.dubbo.IUserService"/>
+```
