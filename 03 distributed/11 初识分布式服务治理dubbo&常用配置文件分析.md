@@ -325,3 +325,10 @@ private Class<?> createAdaptiveExtensionClass() {
 <dubbo:reference interface="cn.nanphonfy.dubbo.IUserService" id="npUserService"
 url="dubbo://localhost:20880/cn.nanphonfy.dubbo.IUserService"/>
 ```
+
+- client-app
+```java 
+ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("dubbo-client.xml");
+IUserService userService = (IUserService) context.getBean("npUserService");
+System.out.println(userService.login("np","123"));
+```
