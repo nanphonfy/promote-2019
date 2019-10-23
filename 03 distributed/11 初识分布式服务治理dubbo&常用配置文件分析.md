@@ -332,3 +332,196 @@ ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("dub
 IUserService userService = (IUserService) context.getBean("npUserService");
 System.out.println(userService.login("np","123"));
 ```
+
+```
+[zk: 192.168.25.154:2181(CONNECTED) 3] ls /
+[np-test, dubbo, zk-persis-np, zookeeper]
+[zk: 192.168.25.154:2181(CONNECTED) 4] ls /dubbo
+[cn.nanphonfy.dubbo.IUserService]
+[zk: 192.168.25.154:2181(CONNECTED) 6] ls /dubbo/cn.nanphonfy.dubbo.IUserService
+[configurators, providers]
+[zk: 192.168.25.154:2181(CONNECTED) 7] ls /dubbo/cn.nanphonfy.dubbo.IUserService/providers
+[dubbo%3A%2F%2F192.168.25.1%3A20880%2Fcn.nanphonfy.dubbo.IUserService%3Fanyhost%3Dtrue%26application%3Ddubbo-server%26dubbo%3D2.5.3%26interface%3Dcn.nanphonfy.dubbo.IUserService%26methods%3Dlogin%26owner%3Dnp%26pid%3D20300%26side%3Dprovider%26timestamp%3D1571068902907]
+```
+
+
+---
+
+```java 
+https://blog.csdn.net/xiaoxufox/article/details/75117992#getactivateextension
+/** 加载扩展类 */
+private Map<String, Class<?>> getExtensionClasses() {
+	// private final Holder<Map<String, Class<?>>> cachedClasses = new Holder<Map<String,Class<?>>>();
+	Map<String, Class<?>> classes = cachedClasses.get();
+	if (classes == null) {
+		synchronized (cachedClasses) {
+			classes = cachedClasses.get();
+			if (classes == null) {
+				classes = loadExtensionClasses();
+				cachedClasses.set(classes);
+			}
+		}
+	}
+	return classes;
+}
+
+/** 从不同目录加载扩展实现 */
+private Map<String, Class<?>> loadExtensionClasses() {
+	// type->Protocol.class,得到SPI的注解
+	final SPI defaultAnnotation = type.getAnnotation(SPI.class);
+	// 若不为空
+	if(defaultAnnotation != null) {
+		// 获取注解标记值
+		String value = defaultAnnotation.value();
+		if(value != null && (value = value.trim()).length() > 0) {
+			String[] names = NAME_SEPARATOR.split(value);
+			if(names.length > 1) {
+				throw new IllegalStateException("more than 1 default extension name on extension " + type.getName()
+						+ ": " + Arrays.toString(names));
+			}
+			if(names.length == 1) cachedDefaultName = names[0];
+		}
+	}
+	
+	// 从3个目录加载
+    Map<String, Class<?>> extensionClasses = new HashMap<String, Class<?>>();
+	// META-INF/dubbo/internal/
+    loadFile(extensionClasses, DUBBO_INTERNAL_DIRECTORY);
+	// META-INF/dubbo/
+    loadFile(extensionClasses, DUBBO_DIRECTORY);
+	// META-INF/services/
+    loadFile(extensionClasses, SERVICES_DIRECTORY);
+	return extensionClasses;
+}
+
+/** 从目录加载扩展实现 */
+private void loadFile(Map<String, Class<?>> extensionClasses, String dir) {
+	String fileName = dir + type.getName();
+	try {
+		Enumeration<java.net.URL> urls;
+		ClassLoader classLoader = findClassLoader();
+		// https://www.cnblogs.com/drwong/p/5389631.html 关于getSystemResource, getResource的总结
+		if (classLoader != null) {
+			urls = classLoader.getResources(fileName);
+		} else {
+			urls = ClassLoader.getSystemResources(fileName);
+		}
+		if (urls != null) {
+			while (urls.hasMoreElements()) {
+				java.net.URL url = urls.nextElement();
+				try {
+					BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream(), "utf-8"));
+					try {
+						String line = null;
+						while ((line = reader.readLine()) != null) {
+							final int ci = line.indexOf('#');
+							if (ci >= 0) line = line.substring(0, ci);
+							line = line.trim();
+							if (line.length() > 0) {
+								try {
+									String name = null;
+									int i = line.indexOf('=');
+									// 文件采用name = value方法
+									if (i > 0) {
+										// 文件采用properties方式的配置，name=实现类的全路径
+										name = line.substring(0, i).trim();
+										line = line.substring(i + 1).trim();
+									}
+									if (line.length() > 0) {
+										Class<?> clazz = Class.forName(line, true, classLoader);
+										// 必须是该扩展点的实现
+										if (! type.isAssignableFrom(clazz)) {
+											throw new IllegalStateException("Error when load extension class(interface: " +
+													type + ", class line: " + clazz.getName() + "), class " 
+													+ clazz.getName() + "is not subtype of interface.");
+										}
+										// 判断是否有自定义适配器类，若有，后面获取适配器时，直接用该创建返回，不用dubbo动态创建
+										if (clazz.isAnnotationPresent(Adaptive.class)) {
+											// private volatile Class<?> cachedAdaptiveClass = null;
+											if(cachedAdaptiveClass == null) {
+												cachedAdaptiveClass = clazz;
+											} else if (! cachedAdaptiveClass.equals(clazz)) {
+												throw new IllegalStateException("More than 1 adaptive class found: "
+														+ cachedAdaptiveClass.getClass().getName()
+														+ ", " + clazz.getClass().getName());
+											}
+										} else {
+											try {
+												// 处理实现类的包裹类，必须是构造器注入扩展点，后期获取具体扩展点实现类时，会使用包裹类封装下
+												clazz.getConstructor(type);
+												// private Set<Class<?>> cachedWrapperClasses;
+												Set<Class<?>> wrappers = cachedWrapperClasses;
+												if (wrappers == null) {
+													cachedWrapperClasses = new ConcurrentHashSet<Class<?>>();
+													wrappers = cachedWrapperClasses;
+												}
+												wrappers.add(clazz);
+											} catch (NoSuchMethodException e) {
+												clazz.getConstructor();
+												if (name == null || name.length() == 0) {
+													name = findAnnotationName(clazz);
+													if (name == null || name.length() == 0) {
+														if (clazz.getSimpleName().length() > type.getSimpleName().length()
+																&& clazz.getSimpleName().endsWith(type.getSimpleName())) {
+															name = clazz.getSimpleName().substring(0, clazz.getSimpleName().length() - type.getSimpleName().length()).toLowerCase();
+														} else {
+															throw new IllegalStateException("No such extension name for the class " + clazz.getName() + " in the config " + url);
+														}
+													}
+												}
+												String[] names = NAME_SEPARATOR.split(name);
+												if (names != null && names.length > 0) {
+													// 判断Activate注解，会缓存Activate注解实现
+													Activate activate = clazz.getAnnotation(Activate.class);
+													if (activate != null) {
+														// private final Map<String, Activate> cachedActivates = new ConcurrentHashMap<String, Activate>();
+														cachedActivates.put(names[0], activate);
+													}
+													for (String n : names) {
+														// private final ConcurrentMap<Class<?>, String> cachedNames = new ConcurrentHashMap<Class<?>, String>();
+														if (! cachedNames.containsKey(clazz)) {
+															cachedNames.put(clazz, n);
+														}
+														Class<?> c = extensionClasses.get(n);
+														if (c == null) {
+															// 缓存扩展实现
+															extensionClasses.put(n, clazz);
+														} else if (c != clazz) {
+															throw new IllegalStateException("Duplicate extension " + type.getName() + " name " + n + " on " + c.getName() + " and " + clazz.getName());
+														}
+													}
+												}
+											}
+										}
+									}
+								} catch (Throwable t) {
+									IllegalStateException e = new IllegalStateException("Failed to load extension class(interface: " + type + ", class line: " + line + ") in " + url + ", cause: " + t.getMessage(), t);
+									exceptions.put(line, e);
+								}
+							}
+						} // end of while read lines
+					} finally {
+						reader.close();
+					}
+				} catch (Throwable t) {
+					logger.error("Exception when load extension class(interface: " +
+										type + ", class file: " + url + ") in " + url, t);
+				}
+			} // end of while urls
+		}
+	} catch (Throwable t) {
+		logger.error("Exception when load extension class(interface: " +
+				type + ", description file: " + fileName + ").", t);
+	}
+}
+
+/** Dubbo生成适配类 */
+private Class<?> createAdaptiveExtensionClass() {
+	// 动态生成适配器代码
+	String code = createAdaptiveExtensionClassCode();
+	ClassLoader classLoader = findClassLoader();
+	com.alibaba.dubbo.common.compiler.Compiler compiler = ExtensionLoader.getExtensionLoader(com.alibaba.dubbo.common.compiler.Compiler.class).getAdaptiveExtension();
+	// 动态编译生成适配器类
+	return compiler.compile(code, classLoader);
+}
+```
