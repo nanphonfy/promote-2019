@@ -296,41 +296,131 @@ private Class<?> createAdaptiveExtensionClass() {
 }
 ```
 
-- server
+####  server
+- dubbo-server.xml
 ```
 <!--提供方信息-->
 <dubbo:application name="dubbo-server" owner="np"/>
 
-<!--注册中心-->
-<dubbo:registry address="N/A"/>
+<!--注册中心，不依赖-->
+<!--<dubbo:registry address="N/A"/>-->
+<dubbo:registry address="zookeeper://192.168.25.154:2181"/>
+<!--多注册中心，eg.中英文网站，在具体的service要指定register的地址，在registry要指定id，eg.id=zk1,zk2-->
 
+<!--多协议支持-->
+<dubbo:protocol name="dubbo" port="20880"/>
+<dubbo:protocol name="hessian" port="8880"/>
+
+<dubbo:service interface="cn.nanphonfy.dubbo.IUserService" ref="npUserService" protocol="dubbo,hessian"/>
+<dubbo:service interface="cn.nanphonfy.dubbo.IPayService" ref="npPayService" protocol="hessian"/>
+
+<bean id="npUserService" class="cn.nanphonfy.dubbo.UserServiceImpl"/>
+<bean id="npPayService" class="cn.nanphonfy.dubbo.PayServiceImpl"/>
+```
+
+- Bootstrap启动函数
+```java 
+public class Bootstrap {
+    public static void main(String[] args) throws IOException {
+        ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("META-INF.spring/dubbo-server.xml");
+        context.start();
+        // 阻塞当前线程
+        System.in.read();
+    }
+}
+```
+#### 负载均衡和集群
+- dubbo-cluster1.xml
+```java 
+<!--提供方信息-->
+<dubbo:application name="dubbo-server" owner="np"/>
+
+<dubbo:registry address="zookeeper://192.168.25.154:2181"/>
+
+<!--多协议支持-->
 <dubbo:protocol name="dubbo" port="20880"/>
 
-<dubbo:service interface="cn.nanphonfy.dubbo.IUserService" ref="npUserService"/>
+<dubbo:service interface="cn.nanphonfy.dubbo.IUserService" ref="npUserService" protocol="dubbo"/>
 
 <bean id="npUserService" class="cn.nanphonfy.dubbo.UserServiceImpl"/>
 ```
+- dubbo-cluster2.xml
 
-- client
+```java 
+<!--提供方信息-->
+<dubbo:application name="dubbo-server" owner="np"/>
 
+<dubbo:registry address="zookeeper://192.168.25.154:2181"/>
+
+<!--多协议支持-->
+<dubbo:protocol name="dubbo" port="20881"/>
+
+<dubbo:service interface="cn.nanphonfy.dubbo.IUserService" ref="npUserService" protocol="dubbo"/>
+
+<bean id="npUserService" class="cn.nanphonfy.dubbo.UserServiceImpl2"/>
 ```
- <!--提供方信息-->
+
+- BootstrapCluster1、2
+```java 
+public static void main(String[] args) throws IOException {
+    ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("META-INF.spring/dubbo-cluster1.xml");
+    context.start();
+    // 阻塞当前线程
+    System.in.read();
+}
+
+public class BootstrapCluster2 {
+    public static void main(String[] args) throws IOException {
+        ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("META-INF.spring/dubbo-cluster2.xml");
+        context.start();
+        // 阻塞当前线程
+        System.in.read();
+    }
+}
+```
+### client
+
+- dubbo-client.xml
+```
+<!--提供方信息-->
 <dubbo:application name="dubbo-client" owner="np"/>
 
 <!--注册中心，不依赖-->
-<dubbo:registry address="N/A"/>
+<!--<dubbo:registry address="N/A"/>-->
+<!--本地缓存d:/dubbotest-->
+<!--<dubbo:registry address="zookeeper://192.168.25.154:2181" file="d:\\dubbotest"/>-->
+<dubbo:registry address="zookeeper://192.168.25.154:2181"/>
 
 <dubbo:protocol name="dubbo" port="20880"/>
 
-<dubbo:reference interface="cn.nanphonfy.dubbo.IUserService" id="npUserService"
-url="dubbo://localhost:20880/cn.nanphonfy.dubbo.IUserService"/>
+<dubbo:reference interface="cn.nanphonfy.dubbo.IUserService" id="npUserService" protocol="dubbo"/>
+<!--不走zookeeper-->
+<!--<dubbo:reference interface="cn.nanphonfy.dubbo.IUserService" id="npUserService"-->
+<!--url="dubbo://localhost:20880/cn.nanphonfy.dubbo.IUserService"/>-->
+<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian"/>
+
+<!--解决循环依赖，eg.c1调用s1，s1服务未启动，则c1调不通,可加check解决，eg.check=false-->
+<!--<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian" check="false"/>-->
 ```
 
 - client-app
 ```java 
-ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("dubbo-client.xml");
-IUserService userService = (IUserService) context.getBean("npUserService");
-System.out.println(userService.login("np","123"));
+public class App {
+    public static void main(String[] args) throws IOException {
+        /*IUserService userService = null;
+        System.out.println(userService.login("nan","123"));*/
+        ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext("dubbo-client.xml");
+        /*IPayService payService = (IPayService) context.getBean("npPayService");
+        payService.payFor(399.0);*/
+        for (int i = 0; i < 10; i++) {
+            IUserService userService = (IUserService) context.getBean("npUserService");
+            System.out.println(userService.login("np","123"));
+        }
+
+        // 观察zookeeper生成的consumers
+        System.in.read();
+    }
+}
 ```
 
 ```
