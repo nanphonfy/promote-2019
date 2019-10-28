@@ -1,3 +1,6 @@
+[TOC]
+
+
 ### 架构发展带来的问题
 >- ①当服务越来越多时，服务URL配置管理变得很困难，F5硬件负载均衡器单点压力也越来越大。此时需要一个服务注册中心，动态注册、发现服务，使
 服务位置透明。并通过在消费方获取服务提供方地址列表，实现软负载均衡和Failover，降低对F5硬件负载均衡器依赖，也减少部分成本；  
@@ -8,10 +11,10 @@
 #### 多版本支持
 >设置不同版本的目的：接口升级后的兼容问题。Dubbo中配置不同版本的接口，会在Zookeeper地址中有多个协议url的体现：
 
-```java 
-dubbo://192.168.11.1:20880%2Fcom.gupaoedu.dubbo.IGpHello%3Fanyhost%3Dtrue%26application%3Dhello-world-app%26dubbo%3D2.5.6%26generic%3Dfalse%26interface%3Dcom.gupaoedu.dubbo.IGpHello%26methods%3DsayHello%26pid%3D60700%26revision%3D1.0.0%26side%3Dprovider%26timestamp%3D1529498478644%26version%3D1.0.0
-
-dubbo://192.168.11.1%3A20880%2Fcom.gupaoedu.dubbo.IGpHello2%3Fanyhost%3Dtrue%26application%3Dhello-world-app%26dubbo%3D2.5.6%26generic%3Dfalse%26interface%3Dcom.gupaoedu.dubbo.IGpHello%26methods%3DsayHello%26pid%3D60700%26revision%3D1.0.1%26side%3Dprovider%26timestamp%3D1529498488747%26version%3D1.0.1
+```linux  
+[zk: 192.168.25.154:2181(CONNECTED) 3] ls /dubbo/cn.nanphonfy.dubbo.IUserService/providers
+[dubbo%3A%2F%2F192.168.25.1%3A20880%2Fcn.nanphonfy.dubbo.IUserService%3Fanyhost%3Dtrue%26application%3Ddubbo-server%26dubbo%3D2.5.3%26interface%3Dcn.nanphonfy.dubbo.IUserService%26methods%3Dlogin%26owner%3Dnp%26pid%3D20968%26revision%3D1.0.0%26side%3Dprovider%26timestamp%3D1572303668221%26version%3D1.0.0
+, dubbo%3A%2F%2F192.168.25.1%3A20880%2Fcn.nanphonfy.dubbo.IUserService2%3Fanyhost%3Dtrue%26application%3Ddubbo-server%26dubbo%3D2.5.3%26interface%3Dcn.nanphonfy.dubbo.IUserService%26methods%3Dlogin%26owner%3Dnp%26pid%3D20968%26revision%3D1.0.1%26side%3Dprovider%26timestamp%3D1572303669568%26version%3D1.0.1]
 ```
 ### 主机绑定
 >发布一个Dubbo服务时，会生成dubbo://ip:port的协议地址，该IP如何生成？可在ServiceConfig中找到如下代码。发现：生成绑定主机时，会通过一层层的判断，直到获取合法ip地址。
@@ -43,6 +46,24 @@ try {
 4.failback失败后自动恢复；  
 5.forking forks，设置并行数；  
 6.broadcast广播，任意一台报错，则执行的方法报错配置方式：通过cluster方式，配置指定的容错方案。
+
+-- 客户端或服务端的配置
+```xml 
+<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian" cluster="failfast"/>
+```
+#### 配置优先级别
+
+```xml 
+- client
+<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian" cluster="failfast" timeout="50"/>
+
+-server
+<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian" cluster="failfast" timeout="500"/>
+```
+>客户端的配置优先服务端：  
+1. 方法级别优先，然后是接口，最后是全局配置； 
+2. 若级别一样，客户端优先，eg.retries、loadbalance、cluster（客户端）、timeout（服务端）。
+
 #### 服务降级
 >目的：保证核心服务可用。  
 降级有几个层面分类：自动降级和人工降级；   按功能分：读服务降级和写服务降级；  
@@ -53,6 +74,21 @@ try {
 >- 1.client端创建TestMock类，实现对应接口，名称必须以Mock结尾；  
 >- 2.client端的xml配置文件中，添加如下配置，add一个mock属性指向创建的TestMock；  
 >- 3.模拟错误（设置timeout），模拟超时异常，运行测试代码即可访问TestMock。当服务端故障解除后，调用过程恢复正常。  
+
+- 超时会走mock返回
+```java 
+<dubbo:reference interface="cn.nanphonfy.dubbo.IPayService" id="npPayService" protocol="hessian" cluster="failfast" timeout="1" mock="cn.nanphonfy.dubbo.TestMock"/>
+
+public class TestMock implements IUserService{
+    @Override
+    public String login(String name, String pwd) {
+        return "系统繁忙，尊敬的："+name;
+    }
+}
+
+// 客户端超时时长为1毫秒，超时走我们客户端的mock
+```
+
 ### 配置优先级别
 >以timeout为例，显示配置查找顺序，retries、loadbalance等也类似。  
 1.方法级优先，接口级次之，全局配置再次之；  
