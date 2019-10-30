@@ -106,6 +106,49 @@ Dubbo基于Java原生SPI机制思想。
 
 
 ##### 代码演示
+###### dubbo-server
+- server-api
+```java 
+// cn.nanphonfy.spi.DataBaseDriver
+public interface DataBaseDriver {
+    String connect(String host);
+}
+```
+- server-provider
+```java 
+// cn.nanphonfy.dubbo.DataBaseConn
+public class DataBaseConn {
+    public static void main(String[] args) {
+        ServiceLoader<DataBaseDriver> serviceLoader = ServiceLoader.load(DataBaseDriver.class);
+        for (DataBaseDriver dataBaseDriver : serviceLoader) {
+            System.out.println(dataBaseDriver.connect("192.168.25.111"));
+        }
+    }
+}
+```
+
+##### dubbo-mysql-driver
+```java 
+public interface DataBaseDriver {
+    String connect(String host);
+}
+```
+##### dubbo-mysql-driver
+```java 
+// cn.nanphonfy.spi.DataBaseDriver
+public class MysqlDriver implements DataBaseDriver{
+    @Override
+    public String connect(String s) {
+        return "Mysql is connected to "+s;
+    }
+}
+```
+- resources
+```xml 
+// META-INF.services
+// META-INF.services/cn.nanphonfy.spi.DataBaseDriver
+cn.nanphonfy.spi.MysqlDriver
+```
 
 
 ##### SPI规范总结
