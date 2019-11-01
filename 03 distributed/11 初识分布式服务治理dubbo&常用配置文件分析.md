@@ -149,6 +149,86 @@ public class MysqlDriver implements DataBaseDriver{
 // META-INF.services/cn.nanphonfy.spi.DataBaseDriver
 cn.nanphonfy.spi.MysqlDriver
 ```
+##### client
+- cn.nanphonfy.dubbo.DefineProtocol
+```java 
+public class DefineProtocol implements Protocol{
+    @Override public int getDefaultPort() {
+        return 8880;
+    }
+
+    @Override public <T> Exporter<T> export(Invoker<T> invoker) throws RpcException {
+        return null;
+    }
+
+    @Override public <T> Invoker<T> refer(Class<T> aClass, URL url) throws RpcException {
+        return null;
+    }
+
+    @Override public void destroy() {
+
+    }
+}
+
+- resource
+META-INF.dubbo/
+com.alibaba.dubbo.rpc.Protocol
+np-protocol=cn.nanphonfy.dubbo.DefineProtocol
+
+- App
+Protocol protocol = ExtensionLoader.getExtensionLoader(Protocol.class).getExtension("np-protocol");
+System.out.println(protocol.getDefaultPort());
+
+System.out.println(ExtensionLoader.getExtensionLoader(Protocol.class).getDefaultExtension().getDefaultPort());
+```
+
+- Protocol$Adpative
+```java 
+import com.alibaba.dubbo.common.extension.ExtensionLoader;
+//package com.alibaba.dubbo.rpc;
+
+public class Protocol$Adpative implements com.alibaba.dubbo.rpc.Protocol {
+    public void destroy() {
+        throw new UnsupportedOperationException("method public abstract void com.alibaba.dubbo.rpc.Protocol.destroy() of interface com.alibaba.dubbo.rpc.Protocol is not adaptive method!");
+    }
+
+    public int getDefaultPort() {
+        throw new UnsupportedOperationException("method public abstract int com.alibaba.dubbo.rpc.Protocol.getDefaultPort() of interface com.alibaba.dubbo.rpc.Protocol is not adaptive method!");
+    }
+
+    public com.alibaba.dubbo.rpc.Invoker refer(java.lang.Class arg0, com.alibaba.dubbo.common.URL arg1) throws java.lang.Class {
+        if (arg1 == null)
+            throw new IllegalArgumentException("url == null");
+        com.alibaba.dubbo.common.URL url = arg1;
+        String extName = (url.getProtocol() == null ? "dubbo" : url.getProtocol());
+        if (extName == null)
+            throw new IllegalStateException(
+                    "Fail to get extension(com.alibaba.dubbo.rpc.Protocol) name from url(" + url.toString()
+                            + ") use keys([protocol])");
+        com.alibaba.dubbo.rpc.Protocol extension = (com.alibaba.dubbo.rpc.Protocol) ExtensionLoader
+                .getExtensionLoader(com.alibaba.dubbo.rpc.Protocol.class).getExtension(extName);
+        return extension.refer(arg0, arg1);
+    }
+
+    public com.alibaba.dubbo.rpc.Exporter export(com.alibaba.dubbo.rpc.Invoker arg0)
+            throws com.alibaba.dubbo.rpc.Invoker {
+        if (arg0 == null)
+            throw new IllegalArgumentException("com.alibaba.dubbo.rpc.Invoker argument == null");
+        if (arg0.getUrl() == null)
+            throw new IllegalArgumentException("com.alibaba.dubbo.rpc.Invoker argument getUrl() == null");
+        com.alibaba.dubbo.common.URL url = arg0.getUrl();
+        String extName = (url.getProtocol() == null ? "dubbo" : url.getProtocol());
+        if (extName == null)
+            throw new IllegalStateException(
+                    "Fail to get extension(com.alibaba.dubbo.rpc.Protocol) name from url(" + url.toString()
+                            + ") use keys([protocol])");
+        com.alibaba.dubbo.rpc.Protocol extension = (com.alibaba.dubbo.rpc.Protocol) ExtensionLoader
+                .getExtensionLoader(com.alibaba.dubbo.rpc.Protocol.class).getExtension(extName);
+        return extension.export(arg0);
+    }
+}
+```
+
 
 
 ##### SPI规范总结
