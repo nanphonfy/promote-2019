@@ -183,6 +183,7 @@ System.out.println(ExtensionLoader.getExtensionLoader(Protocol.class).getDefault
 ```
 
 - Protocol$Adpative
+>com.alibaba.dubbo.common.extension.ExtensionLoader的createAdaptiveExtensionClass方法生成如下代码。
 ```java 
 import com.alibaba.dubbo.common.extension.ExtensionLoader;
 //package com.alibaba.dubbo.rpc;
