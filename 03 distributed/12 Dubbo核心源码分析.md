@@ -1,3 +1,5 @@
+[TOC]
+
 ### Dubbo Extension扩展点
 >SPI->Extension  
 Extension.getExtensionLoader().getAdaptiveExtension(); //动态适配器的扩展点  
@@ -136,4 +138,49 @@ spring=com.alibaba.dubbo.config.spring.extension.SpringExtensionFactory
 >方法： 动态创建一个自适应的适配器  
 类：直接加载当前的适配器
 
+- dubbo网站链接
+>http://dubbo.apache.org/zh-cn/docs/dev/impls/protocol.html
 
+### 服务发布及注册流程
+>spring写的标签，和spring官方无关系，意味着它是基于spring的扩展。  
+spring提供的扩展类如下：NamespaceHandler、BeanDefinitionParse  
+
+```java 
+\dubbo-config\dubbo-config-spring
+\META-INF\spring.handlers
+http\://code.alibabatech.com/schema/dubbo=com.alibaba.dubbo.config.spring.schema.DubboNamespaceHandler
+
+// com.alibaba.dubbo.config.spring.schema.DubboNamespaceHandler
+public class DubboNamespaceHandler extends NamespaceHandlerSupport {
+	static {
+		Version.checkDuplicate(DubboNamespaceHandler.class);
+	}
+
+	public void init() {
+	    registerBeanDefinitionParser("application", new DubboBeanDefinitionParser(ApplicationConfig.class, true));
+        registerBeanDefinitionParser("module", new DubboBeanDefinitionParser(ModuleConfig.class, true));
+        registerBeanDefinitionParser("registry", new DubboBeanDefinitionParser(RegistryConfig.class, true));
+        registerBeanDefinitionParser("monitor", new DubboBeanDefinitionParser(MonitorConfig.class, true));
+        registerBeanDefinitionParser("provider", new DubboBeanDefinitionParser(ProviderConfig.class, true));
+        registerBeanDefinitionParser("consumer", new DubboBeanDefinitionParser(ConsumerConfig.class, true));
+        registerBeanDefinitionParser("protocol", new DubboBeanDefinitionParser(ProtocolConfig.class, true));
+        registerBeanDefinitionParser("service", new DubboBeanDefinitionParser(ServiceBean.class, true));
+        registerBeanDefinitionParser("reference", new DubboBeanDefinitionParser(ReferenceBean.class, false));
+        registerBeanDefinitionParser("annotation", new DubboBeanDefinitionParser(AnnotationBean.class, true));
+    }
+}
+```
+>dubbo源码是基于领域驱动的设计思想，可以看下源码结构。  
+DubboBeanDefinitionParser（解析spring配置文件）->ServiceBean
+
+```java 
+// com.alibaba.dubbo.config.spring.ServiceBean
+public void afterPropertiesSet() throws Exception {
+    ......
+    // 非常关键的，进入服务发布的过程
+    if (! isDelay()) {
+        export();
+    }
+}
+```
+>启动一个服务时做了啥（调用注册中心发布服务到zookeeper、启动一个netty 服务）
