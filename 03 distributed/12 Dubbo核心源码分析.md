@@ -345,7 +345,7 @@ Protocol$Adatpive. export()
 - getAdaptiveExtension流程  
 `getExtensionLoader->getAdaptiveExtension->（injectExtension依赖注入）getAdaptiveExtensionClass->是否存在自定义AdaptiveClass->是（结束）|否->createAdaptiveExtensionClass->Protocol$Adaptive`
 
-- injectExtension
+#### injectExtension
 ```java 
 // com.alibaba.dubbo.common.extension.ExtensionLoader
 private T injectExtension(T instance) {
@@ -388,6 +388,7 @@ private T injectExtension(T instance) {
 在上面......
 ```
 
+#### objectFactory
 >injectExtension方法中，首先判断objectFactory是否为空。在获得ExtensionLoader时，就对 objectFactory进行了初始化。  
 
 ```java 
@@ -436,5 +437,66 @@ public <T> T getExtension(Class<T> type, String name) {
     return null;
 }
 ```
+### 服务端发布流程
+#### Spring对外留出了扩展
+>dubbo是基于spring配置来实现服务发布的，是基于spring的扩展写自己的标签。  
+总结：可通过spring扩展机制扩展自己的标签。dubbo配置文件中的<dubbo:service>，就是自定义扩展标签。  
+实现自定义扩展，有三个步骤（spring定义了两个接口，用来实现扩展）  
+>- 1.NamespaceHandler:注册一堆BeanDefinitionParser，利用他们进行解析；  
+>- 2.BeanDefinitionParser:用于解析每个element；  
+>- 3.Spring默认加载jar包下的META-INF/spring.handlers文件寻找对应的NamespaceHandler。  
 
+>以下是dubbo-config模块下的dubbo-config-spring  
+>>dubbo-config/dubbo-config-spring  
+META-INF/spring.handlers
+
+#### dubbo接入实现
+>dubbo中spring扩展就是使用spring自定义类型，故同样也有NamespaceHandler、BeanDefinitionParser。而NamespaceHandler是DubboNamespaceHandler
+
+```java 
+// com.alibaba.dubbo.config.spring.schema.DubboNamespaceHandler
+public class DubboNamespaceHandler extends NamespaceHandlerSupport {
+	static {
+		Version.checkDuplicate(DubboNamespaceHandler.class);
+	}
+
+	public void init() {
+	    registerBeanDefinitionParser("application", new DubboBeanDefinitionParser(ApplicationConfig.class, true));
+        registerBeanDefinitionParser("module", new DubboBeanDefinitionParser(ModuleConfig.class, true));
+        registerBeanDefinitionParser("registry", new DubboBeanDefinitionParser(RegistryConfig.class, true));
+        registerBeanDefinitionParser("monitor", new DubboBeanDefinitionParser(MonitorConfig.class, true));
+        registerBeanDefinitionParser("provider", new DubboBeanDefinitionParser(ProviderConfig.class, true));
+        registerBeanDefinitionParser("consumer", new DubboBeanDefinitionParser(ConsumerConfig.class, true));
+        registerBeanDefinitionParser("protocol", new DubboBeanDefinitionParser(ProtocolConfig.class, true));
+        registerBeanDefinitionParser("service", new DubboBeanDefinitionParser(ServiceBean.class, true));
+        registerBeanDefinitionParser("reference", new DubboBeanDefinitionParser(ReferenceBean.class, false));
+        registerBeanDefinitionParser("annotation", new DubboBeanDefinitionParser(AnnotationBean.class, true));
+    }
+}
+```
+>BeanDefinitionParser全部都使用了DubboBeanDefinitionParser，它主要做的事：把不同的配置分别转化成spring容器中的bean对象。  
+>application 对应 ApplicationConfig  
+registry 对应 RegistryConfig  
+monitor 对应 MonitorConfig  
+provider 对应 ProviderConfig  
+consumer 对应 ConsumerConfig  
+......
+
+>为了在spring启动时，相应启动provider发布服务、注册服务的过程，同时为让客户端在启动时自动订阅发现服务，加入两个bean：ServiceBean、ReferenceBean。  
+>>分别继承了ServiceConfig和ReferenceConfig，
+同时还分别实现了InitializingBean 、DisposableBean, ApplicationContextAware, ApplicationListener, BeanNameAware。 
+```java 
+public class ServiceBean<T> extends ServiceConfig<T> implements InitializingBean, DisposableBean, ApplicationContextAware, ApplicationListener, BeanNameAware
+
+public class ReferenceBean<T> extends ReferenceConfig<T> implements FactoryBean, ApplicationContextAware, InitializingBean, DisposableBean 
+```
+>InitializingBean接口为bean提供了初始化方法的方式，只包括afterPropertiesSet，凡是继承该接口的类，在初始化bean时会执行该方法；  
+DisposableBean bean被销毁时，spring容器会自动执行destory，eg.释放资源；  
+ApplicationContextAware实现了该接口的bean，当spring容器初始化时，会自动将ApplicationContext注入进来；  
+ApplicationListener、ApplicationEvent事件监听，spring容器启动后会发一个事件通知；  
+BeanNameAware获得自身初始化时，本身的bean的 id属性。  
+
+- 基本实现思路：
+>1.利用spring的解析收集xml中的配置信息，把这些配置信息存储到serviceConfig中；  
+2.调用ServiceConfig的export进行服务的发布和注册。
 
