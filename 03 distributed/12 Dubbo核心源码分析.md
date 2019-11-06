@@ -172,7 +172,7 @@ public class DubboNamespaceHandler extends NamespaceHandlerSupport {
 ```
 >dubbo源码是基于领域驱动的设计思想，可以看下源码结构。  
 
-- DubboBeanDefinitionParser（解析spring配置文件）->ServiceBean->ServiceConfig(export->doExport->doExportUrls->doExportUrlsFor1Protocol)->Dubbo$Protocol->export
+- DubboBeanDefinitionParser（解析spring配置文件）->ServiceBean->ServiceConfig(export->doExport->doExportUrls->doExportUrlsFor1Protocol)->Dubbo$Protocol(export)->RegistryProtocol(export)
 
 ```java 
 // com.alibaba.dubbo.config.spring.ServiceBean
@@ -306,6 +306,135 @@ invoker的url为->registry://192.168.25.154:2181/com.alibaba.dubbo.registry.Regi
 >Protocol extension = 
 ExtensionLoader.getExtensionLoader(Protocol.class).getExtension(“registry”);，指定扩展点，跟适配器扩展点不一样。
 
+>registry=com.alibaba.dubbo.registry.integration.RegistryProtocol  
+extension=RegistryProtocol  
 
+
+```java 
+// com.alibaba.dubbo.registry.integration.RegistryProtocol
+//本地发布服务,启动服务
+final ExporterChangeableWrapper<T> exporter = doLocalExport(originInvoker);
+
+private <T> ExporterChangeableWrapper<T>  doLocalExport(final Invoker<T> originInvoker){
+    String key = getCacheKey(originInvoker);
+    ExporterChangeableWrapper<T> exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+    if (exporter == null) {
+        synchronized (bounds) {
+            exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+            if (exporter == null) {
+                final Invoker<?> invokerDelegete = new InvokerDelegete<T>(originInvoker, getProviderUrl(originInvoker));
+                exporter = new ExporterChangeableWrapper<T>((Exporter<T>)protocol.export(invokerDelegete), originInvoker);
+                bounds.put(key, exporter);
+            }
+        }
+    }
+    return (ExporterChangeableWrapper<T>) exporter;
+}
+
+
+protocol.export(invokerDelegete),originInvoker)  
+ExtensionLoader.getExtensionLoader(Protocol.class).getAdaptiveExtension()
+Protocol$Adatpive. export()
+```
+
+---
+
+### Dubbo的Extension源码分析  
+>前面基于ExtensionLoader.getExtensionLoader().getAdaptiveExtension()入口进行源码分析。  
+
+- getAdaptiveExtension流程  
+`getExtensionLoader->getAdaptiveExtension->（injectExtension依赖注入）getAdaptiveExtensionClass->是否存在自定义AdaptiveClass->是（结束）|否->createAdaptiveExtensionClass->Protocol$Adaptive`
+
+- injectExtension
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private T injectExtension(T instance) {
+    try {
+        // private final ExtensionFactory objectFactory;
+        // getExtensionLoader时赋值
+        if (objectFactory != null) {
+            for (Method method : instance.getClass().getMethods()) {
+                // 判断是否以set开头，通过set进行动态注入
+                if (method.getName().startsWith("set") && method.getParameterTypes().length == 1 && Modifier
+                        .isPublic(method.getModifiers())) {
+                    Class<?> pt = method.getParameterTypes()[0];
+                    try {
+                        String property = method.getName().length() > 3 ?
+                                method.getName().substring(3, 4).toLowerCase() + method.getName().substring(4) :
+                                "";
+                        // 根据类型、名称获得对应扩展点
+                        Object object = objectFactory.getExtension(pt, property);
+                        if (object != null) {
+                            method.invoke(instance, object);
+                        }
+                    } catch (Exception e) {
+                        logger.error("fail to inject via method " + method.getName() + " of interface " + type.getName() + ": " + e.getMessage(), e);
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error(e.getMessage(), e);
+    }
+    return instance;
+}
+```
+>扩展点自动注入是根据setter方法对应的参数类
+型和property名称从ExtensionFactory中查询，若有返回扩展点实例，就注入操作。  
+讲解@Adaptive时提到过AdaptiveCompiler类，该类有一个setDefaultCompiler方法，本身没实现compile，而是基于DEFAULT_COMPILER，然后加载指定扩展点进行动态调用。那么该DEFAULT_COMPILER ，就是在injectExtension方法中进行注入的。
+
+- AdaptiveCompiler
+```java 
+在上面......
+```
+
+>injectExtension方法中，首先判断objectFactory是否为空。在获得ExtensionLoader时，就对 objectFactory进行了初始化。  
+
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private ExtensionLoader(Class<?> type) {
+    this.type = type;
+    objectFactory = (type == ExtensionFactory.class ? null : ExtensionLoader.getExtensionLoader(ExtensionFactory.class).getAdaptiveExtension());
+}
+```
+>通过ExtensionLoader.getExtensionLoader(ExtensionFactory.class).getAdaptiveExtension()获得一个自适应扩展点，ExtensionFactory接口是一个扩展点，且有一个自己实现的自适应扩展点AdaptiveExtensionFactory。 
+```java 
+@SPI
+public interface ExtensionFactory
+AdaptiveExtensionFactory
+SpiExtensionFactory
+SpringExtensionFactory
+```
+>注意：@Adaptive加载到类上表示这是一个自定义适配器类，表示再调用getAdaptiveExtension时，
+不需走上面这么复杂的过程。会直接加载到AdaptiveExtensionFactory。（此处代码在loadFile），然后在getAdaptiveExtensionClass（）方法处有判断。
+
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+......
+if (clazz.isAnnotationPresent(Adaptive.class)) {
+    if(cachedAdaptiveClass == null) {
+        cachedAdaptiveClass = clazz;
+    } else if (! cachedAdaptiveClass.equals(clazz)) {
+        throw new IllegalStateException("More than 1 adaptive class found: "
+                + cachedAdaptiveClass.getClass().getName()
+                + ", " + clazz.getClass().getName());
+    }
+}
+......
+```
+>除自定义自适应适配器类外，还有两个实现类，一个是SPI，一个是Spring，AdaptiveExtensionFactory，它轮询这2个，从一个中获取到就返回。
+
+```java 
+// com.alibaba.dubbo.common.extension.factory.AdaptiveExtensionFactory
+public <T> T getExtension(Class<T> type, String name) {
+    for (ExtensionFactory factory : factories) {
+        T extension = factory.getExtension(type, name);
+        if (extension != null) {
+            return extension;
+        }
+    }
+    return null;
+}
+```
 
 
