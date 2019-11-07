@@ -500,3 +500,115 @@ BeanNameAware获得自身初始化时，本身的bean的 id属性。
 >1.利用spring的解析收集xml中的配置信息，把这些配置信息存储到serviceConfig中；  
 2.调用ServiceConfig的export进行服务的发布和注册。
 
+### 服务的发布过程
+>serviceBean是服务发布的切入点，通过afterPropertiesSet方法，调用export()方法进行发布。export为父类ServiceConfig中的方法，故跳转到SeviceConfig类中的export方法delay的使用。  
+
+```java 
+// com.alibaba.dubbo.config.ServiceConfig
+public synchronized void export() {
+......
+    if (delay != null && delay > 0) {
+        Thread thread = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    Thread.sleep(delay);
+                } catch (Throwable e) {
+                }
+                doExport();
+            }
+        });
+        thread.setDaemon(true);
+        thread.setName("DelayExportServiceThread");
+        thread.start();
+    } else {
+        doExport();
+    }
+}
+```
+>delay作用：延迟暴露->Thread.sleep(delay)
+>>1.export是synchronized修饰的方法。暴露过程是原子操作，正常情况不会出现锁竞争问题，毕竟初始化过程大多数情况下都是单一线程操作，这里联想到了spring的初始化流程，也进行了加锁操作（给我们平时设计一个不错的启示：初始化流程的性能调优 优先级应放比较低，但安全的优先级应该放比较高）；  
+2. doExport()同样是一堆初始化代码。
+
+#### export过程
+```java 
+// com.alibaba.dubbo.config.ServiceConfig
+protected synchronized void doExport() {
+    ......
+    doExportUrls();
+}
+
+private void doExportUrls() {
+    // 是不是获得注册中心的
+    List<URL> registryURLs = loadRegistries(true);
+    // 是不是支持多协议发布
+    for (ProtocolConfig protocolConfig : protocols) {
+        doExportUrlsFor1Protocol(protocolConfig, registryURLs);
+    }
+}
+```
+>doExport()最终会调用到doExportUrls()，该protocols长这样`<dubbo:protocol name="dubbo" 
+port="20888" id="dubbo" />`   
+protocols也是根据配置装配出来的。
+
+- doExportUrlsFor1Protocol是怎样将服务暴露出去的？具体逻辑如下：
+```java 
+// com.alibaba.dubbo.config.ServiceConfig
+private void doExportUrlsFor1Protocol(ProtocolConfig protocolConfig, List<URL> registryURLs) {
+    ......
+    //配置为none不暴露
+    if (!Constants.SCOPE_NONE.toString().equalsIgnoreCase(scope)) {
+        //配置不是remote的情况下做本地暴露 (配置为remote，则表示只暴露远程服务)
+        if (!Constants.SCOPE_REMOTE.toString().equalsIgnoreCase(scope)) {
+            exportLocal(url);
+        }
+        //如果配置不是local则暴露为远程服务.(配置为local，则表示只暴露远程服务)
+        if (!Constants.SCOPE_LOCAL.toString().equalsIgnoreCase(scope)) {
+            if (logger.isInfoEnabled()) {
+                logger.info("Export dubbo service " + interfaceClass.getName() + " to url " + url);
+            }
+            if (registryURLs != null && registryURLs.size() > 0 && url.getParameter("register", true)) {
+                for (URL registryURL : registryURLs) {
+                    url = url.addParameterIfAbsent("dynamic", registryURL.getParameter("dynamic"));
+                    URL monitorUrl = loadMonitor(registryURL);
+                    if (monitorUrl != null) {
+                        url = url.addParameterAndEncoded(Constants.MONITOR_KEY, monitorUrl.toFullString());
+                    }
+                    if (logger.isInfoEnabled()) {
+                        logger.info("Register dubbo service " + interfaceClass.getName() + " url " + url
+                                + " to registry " + registryURL);
+                    }
+                    // 通过proxyFactory来获取Invoker对象
+                    Invoker<?> invoker = proxyFactory.getInvoker(ref, (Class) interfaceClass,
+                            registryURL.addParameterAndEncoded(Constants.EXPORT_KEY, url.toFullString()));
+                    // 注册服务
+                    Exporter<?> exporter = protocol.export(invoker);
+                    // 将exporter添加到list中
+                    exporters.add(exporter);
+                }
+            } else {
+                Invoker<?> invoker = proxyFactory.getInvoker(ref, (Class) interfaceClass, url);
+
+                Exporter<?> exporter = protocol.export(invoker);
+                exporters.add(exporter);
+            }
+        }
+    }
+    this.urls.add(url);
+}
+```
+>dubbo工作原理：doExportUrlsFor1Protocol方
+法，先创建两个URL，分别如下`dubbo://192.168.xx.25:20888/XXX;`,`registry://192.168.XXX;`(注册中心看到的services的providers信息)
+>>比较核心的抽象：Invoker，Invoker是一个代理类，从ProxyFactory中生成。  
+- 小结
+>1. Invoker - 执行具体远程调用；  
+2. Protocol – 服务地址的发布和订阅；  
+3. Exporter – 暴露服务或取消暴露；  
+>>protocol.export(invoker)，protocol 这个地方，并不是直接调用DubboProtocol协议的 export。具体实例化代码如下：
+
+```java 
+private static final Protocol protocol = ExtensionLoader.
+getExtensionLoader(Protocol.class).
+getAdaptiveExtension(); //Protocol$Adaptive
+```
+>实际，该Protocol得到一个Protocol$Adaptive（自适应适配器）。此时通过protocol.export(invoker),实际上调用的是Protocol$Adaptive动态类的 export方法。具体代码参考上面。
+
