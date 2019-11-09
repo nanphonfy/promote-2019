@@ -612,3 +612,292 @@ getAdaptiveExtension(); //Protocol$Adaptive
 ```
 >实际，该Protocol得到一个Protocol$Adaptive（自适应适配器）。此时通过protocol.export(invoker),实际上调用的是Protocol$Adaptive动态类的 export方法。具体代码参考上面。
 
+#### 调用ExtensionLoader.getExtensionLoader(Protocol.class).getExtension(extName);
+>该段代码通过工厂模式获得一个ExtensionLoader 实例。
+##### getExtension
+>该方法主要作用：用来获取ExtensionLoader实例代表的扩展指定实现。已扩展实现的名字作为参数，结合前面学习getAdaptiveExtension
+的代码.
+
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+public T getExtension(String name) {
+    if (name == null || name.length() == 0)
+        throw new IllegalArgumentException("Extension name == null");
+    if ("true".equals(name)) {
+        return getDefaultExtension();
+    }
+    //判断是否已经缓存过该扩展点
+    Holder<Object> holder = cachedInstances.get(name);
+    if (holder == null) {
+        cachedInstances.putIfAbsent(name, new Holder<Object>());
+        holder = cachedInstances.get(name);
+    }
+    Object instance = holder.get();
+    if (instance == null) {
+        synchronized (holder) {
+            instance = holder.get();
+            if (instance == null) {
+                //createExtension ，创建扩展点
+                instance = createExtension(name);
+                holder.set(instance);
+            }
+        }
+    }
+    return (T) instance;
+}
+```
+>createExtension主要做4个事情:  
+1.根据name获取对应class;  
+2.根据class创建一个实例；  
+3.对获取实例进行依赖注入；  
+4.对实例进行包装，分别调用带Protocol参数的构造函数创建实例，然后进行依赖注入。  
+>a)dubbo-rpc-api/resources/com.alibaba.dubbo.rcp.Protocol文件中有存在filter/listener；  
+b)遍历cachedWrapperClass对DubboProtocol进行包装，会通过ProtocolFilterWrapper、ProtocolListenerWrapper包装。  
+
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private T createExtension(String name) {
+    Class<?> clazz = getExtensionClasses().get(name);
+    if (clazz == null) {
+        throw findException(name);
+    }
+    try {
+        T instance = (T) EXTENSION_INSTANCES.get(clazz);
+        if (instance == null) {
+            EXTENSION_INSTANCES.putIfAbsent(clazz, (T) clazz.newInstance());
+            instance = (T) EXTENSION_INSTANCES.get(clazz);
+        }
+        //对获取的实例进行依赖注入
+        injectExtension(instance);
+        //cachedWrapperClasses在loadFile中赋值
+        Set<Class<?>> wrapperClasses = cachedWrapperClasses;
+        if (wrapperClasses != null && wrapperClasses.size() > 0) {
+            for (Class<?> wrapperClass : wrapperClasses) {
+                // 对实例进行包装，分别调用带Protocol参数的构造函数创建实例，然后进行依赖注入。
+                instance = injectExtension((T) wrapperClass.getConstructor(type).newInstance(instance));
+            }
+        }
+        return instance;
+    } catch (Throwable t) {
+        throw new IllegalStateException("Extension instance(name: " + name + ", class: " +
+                type + ")  could not be instantiated: " + t.getMessage(), t);
+    }
+}
+```
+##### getExtensionClasses
+>该方法就是加载扩展点实现类。然后调用loadExtensionClasses，去对应文件下加载指定的扩展点。
+```java 
+// com.alibaba.dubbo.common.extension.ExtensionLoader
+private Map<String, Class<?>> getExtensionClasses() {
+    Map<String, Class<?>> classes = cachedClasses.get();
+    if (classes == null) {
+        synchronized (cachedClasses) {
+            classes = cachedClasses.get();
+            if (classes == null) {
+                classes = loadExtensionClasses();
+                cachedClasses.set(classes);
+            }
+        }
+    }
+    return classes;
+}
+```
+##### 总结
+➢ EExtensionLoader.getExtensionLoader(Protocol.class).getExtension(extName); 当extName 为registry时，不需再次阅读这块代码了，直接可在扩展点中找到相应的实现扩展点:
+`[/dubbo-registryapi/src/main/resources/METAINF/dubbo/internal/com.alibaba.dubbo.rpc.Protocol]` 配置如下:`registry=com.alibaba.dubbo.registry.integration.RegistryProtocol`，故可定位到RegistryProtocol类的export方法。
+
+#### export
+
+```java 
+// com/alibaba/dubbo/registry/integration/RegistryProtocol
+public <T> Exporter<T> export(final Invoker<T> originInvoker) throws RpcException {
+    //export invoker 本地发布服务（启动 netty）
+    final ExporterChangeableWrapper<T> exporter = doLocalExport(originInvoker);
+    //registry provider
+    final Registry registry = getRegistry(originInvoker);
+    final URL registedProviderUrl = getRegistedProviderUrl(originInvoker);
+    registry.register(registedProviderUrl);
+    // 订阅override数据
+    // FIXME 提供者订阅时，会影响同一JVM即暴露服务，又引用同一服务的的场景，因为subscribed以服务名为缓存的key，导致订阅信息覆盖。
+    final URL overrideSubscribeUrl = getSubscribedOverrideUrl(registedProviderUrl);
+    final OverrideListener overrideSubscribeListener = new OverrideListener(overrideSubscribeUrl);
+    overrideListeners.put(overrideSubscribeUrl, overrideSubscribeListener);
+    registry.subscribe(overrideSubscribeUrl, overrideSubscribeListener);
+    //保证每次export都返回一个新的exporter实例
+    return new Exporter<T>() {
+        public Invoker<T> getInvoker() {
+            return exporter.getInvoker();
+        }
+
+        public void unexport() {
+            try {
+                exporter.unexport();
+            } catch (Throwable t) {
+                logger.warn(t.getMessage(), t);
+            }
+            try {
+                registry.unregister(registedProviderUrl);
+            } catch (Throwable t) {
+                logger.warn(t.getMessage(), t);
+            }
+            try {
+                overrideListeners.remove(overrideSubscribeUrl);
+                registry.unsubscribe(overrideSubscribeUrl, overrideSubscribeListener);
+            } catch (Throwable t) {
+                logger.warn(t.getMessage(), t);
+            }
+        }
+    };
+}
+```
+##### doLocalExport
+- 本地先启动监听服务
+```java 
+// com.alibaba.dubbo.registry.integration.RegistryProtocol
+private <T> ExporterChangeableWrapper<T> doLocalExport(
+        final Invoker<T> originInvoker) {
+    String key = getCacheKey(originInvoker);
+    ExporterChangeableWrapper<T> exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+    if (exporter == null) {
+        synchronized (bounds) {
+            exporter = (ExporterChangeableWrapper<T>) bounds.get(key);
+            if (exporter == null) {
+                final Invoker<?> invokerDelegete = new InvokerDelegete<T>(originInvoker,
+                        getProviderUrl(originInvoker));
+                exporter = new ExporterChangeableWrapper<T>((Exporter<T>) protocol.export(invokerDelegete),
+                        originInvoker);
+                bounds.put(key, exporter);
+            }
+        }
+    }
+    return (ExporterChangeableWrapper<T>) exporter;
+}
+
+
+public class RegistryProtocol implements Protocol {
+    ......
+    private Protocol protocol;
+    public void setProtocol(Protocol protocol) {
+        this.protocol = protocol;
+    }
+    ......
+}
+```
+>protocol怎么赋值？是一个依赖注入的扩展点。在加载扩展点时，有一个injectExtension方法，针对已加载的扩展点中的扩展点属性进行依赖注入。
+
+- PROTOCOL.EXPORT
+>protocol是一个自适应扩展点，Protocol$Adaptive，然后调用这个自适应扩展点中的export方法，这时传入的协议地址应该是dubbo://127.0.0.1/xxxx… 因此在Protocol$Adaptive.export方法中，ExtensionLoader.getExtension(Protocol.class).getExtension应该就是基于DubboProtocol协议去发布服务了？这里并不是获得一个单纯的DubboProtocol扩展点，而是会通过Wrapper对Protocol进行装 饰，装饰器分别为: ProtocolFilterWrapper/ProtocolListenerWrapper; 至于MockProtocol为何不在装饰器里？ExtensionLoader.loadFile有一个判断，装饰器必须要具备一个带有Protocol的构造方法
+
+```java 
+// com.alibaba.dubbo.rpc.protocol.ProtocolFilterWrapper
+public ProtocolFilterWrapper(Protocol protocol){
+    if (protocol == null) {
+        throw new IllegalArgumentException("protocol == null");
+    }
+    this.protocol = protocol;
+}
+```
+>Protocol$Adaptive里的export方法，会调用 ProtocolFilterWrapper、ProtocolListenerWrapper类的方法，这两个装饰器是干嘛的？ProtocolFilterWrapper类非常重要，dubbo机制里日志记录、超时等功能都在这一部分实现，该类有3个特点，
+①它有一个参数为Protocol protocol的构造函数；  
+②它实现了Protocol接口；  
+③它使用责任链模式，对export和refer函数进行了封装。
+
+```java 
+// com.alibaba.dubbo.rpc.protocol.ProtocolFilterWrapper
+public <T> Exporter<T> export(Invoker<T> invoker) throws RpcException {
+    if (Constants.REGISTRY_PROTOCOL.equals(invoker.getUrl().getProtocol())) {
+        return protocol.export(invoker);
+    }
+    return protocol.export(buildInvokerChain(invoker, Constants.SERVICE_FILTER_KEY, Constants.PROVIDER));
+}
+
+/**buildInvokerChain 函数：它读取所有的 filter 类，利用这些类封装invoker**/
+private static <T> Invoker<T> buildInvokerChain(final Invoker<T> invoker, String key, String group) {
+    Invoker<T> last = invoker;
+    //自动激活扩展点，根据条件获取当前扩展可自动激活的实现
+    List<Filter> filters = ExtensionLoader.getExtensionLoader(Filter.class).getActivateExtension(invoker.getUrl(), key, group);
+    if (filters.size() > 0) {
+        for (int i = filters.size() - 1; i >= 0; i --) {
+            final Filter filter = filters.get(i);
+            final Invoker<T> next = last;
+            last = new Invoker<T>() {
+
+                public Class<T> getInterface() {
+                    return invoker.getInterface();
+                }
+
+                public URL getUrl() {
+                    return invoker.getUrl();
+                }
+
+                public boolean isAvailable() {
+                    return invoker.isAvailable();
+                }
+
+                public Result invoke(Invocation invocation) throws RpcException {
+                    return filter.invoke(next, invocation);
+                }
+
+                public void destroy() {
+                    invoker.destroy();
+                }
+
+                @Override
+                public String toString() {
+                    return invoker.toString();
+                }
+            };
+        }
+    }
+    return last;
+}
+```
+>`/dubbo-rpc-api/src/main/resources/METAINF/dubbo/internal/com.alibaba.dubbo.rpc.Filter`就是对Invoker，通过如下的Filter组装成一个责任链。
+```xml 
+echo=com.alibaba.dubbo.rpc.filter.EchoFilter
+generic=com.alibaba.dubbo.rpc.filter.GenericFilter
+genericimpl=com.alibaba.dubbo.rpc.filter.GenericImplFilter
+token=com.alibaba.dubbo.rpc.filter.TokenFilter
+accesslog=com.alibaba.dubbo.rpc.filter.AccessLogFilter
+activelimit=com.alibaba.dubbo.rpc.filter.ActiveLimitFilter
+classloader=com.alibaba.dubbo.rpc.filter.ClassLoaderFilter
+context=com.alibaba.dubbo.rpc.filter.ContextFilter
+consumercontext=com.alibaba.dubbo.rpc.filter.ConsumerContextFilt
+er
+exception=com.alibaba.dubbo.rpc.filter.ExceptionFilter
+executelimit=com.alibaba.dubbo.rpc.filter.ExecuteLimitFilter
+deprecated=com.alibaba.dubbo.rpc.filter.DeprecatedFilter
+compatible=com.alibaba.dubbo.rpc.filter.CompatibleFilter
+timeout=com.alibaba.dubbo.rpc.filter.TimeoutFilter
+```
+>这其中涉及到很多功能：权限验证、异常、超时等，当然可预计计算调用时间等应该也是在这其中的某个类实现的；这里可看到export和refer过程都会被filter过滤。
+
+#### ProtocolListenerWrapper
+>export和refer分别对应不同的Wrapper；export
+是对应的ListenerExporterWrapper。这块暂时不分析。
+
+```java 
+// com.alibaba.dubbo.rpc.protocol.ProtocolListenerWrapper
+public <T> Exporter<T> export(Invoker<T> invoker) throws RpcException {
+    if (Constants.REGISTRY_PROTOCOL.equals(invoker.getUrl().getProtocol())) {
+        return protocol.export(invoker);
+    }
+    return new ListenerExporterWrapper<T>(protocol.export(invoker), 
+            Collections.unmodifiableList(ExtensionLoader.getExtensionLoader(ExporterListener.class)
+                    .getActivateExtension(invoker.getUrl(), Constants.EXPORTER_LISTENER_KEY)));
+}
+
+public <T> Invoker<T> refer(Class<T> type, URL url) throws RpcException {
+    if (Constants.REGISTRY_PROTOCOL.equals(url.getProtocol())) {
+        return protocol.refer(type, url);
+    }
+    return new ListenerInvokerWrapper<T>(protocol.refer(type, url), 
+            Collections.unmodifiableList(
+                    ExtensionLoader.getExtensionLoader(InvokerListener.class)
+                    .getActivateExtension(url, Constants.INVOKER_LISTENER_KEY)));
+}
+```
+
+
+
+
